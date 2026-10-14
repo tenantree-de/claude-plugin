@@ -1,0 +1,20 @@
+{
+  "name": "tenantree",
+  "version": "0.5.4",
+  "description": "Connects Claude Code to tenantree: administration of SAP BTP landscapes with sign-in at the customer's SAP Cloud Identity Services, approval and audit.",
+  "author": {
+    "name": "Sandner Consulting",
+    "email": "kontakt@tenantree.de",
+    "url": "https://tenantree.de"
+  },
+  "homepage": "https://tenantree.de/plugin.html",
+  "license": "LicenseRef-Proprietary",
+  "keywords": [
+    "sap",
+    "btp",
+    "mcp",
+    "administration",
+    "integration-suite"
+  ],
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "tenantree",
+  "owner": { "name": "Sandner Consulting", "email": "kontakt@tenantree.de" },
+  "description": "tenantree for Claude Code: administration of SAP BTP landscapes with approval and audit",
+  "plugins": [
+    {
+      "name": "tenantree",
+      "source": "./plugins/tenantree",
+      "description": "Connects Claude Code to tenantree (portal.tenantree.de): landscapes, sign-in at your SAP Cloud Identity Services, SAP BTP administration"
+    }
+  ]
+}

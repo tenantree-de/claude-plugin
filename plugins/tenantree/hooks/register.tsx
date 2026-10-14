@@ -1,0 +1,87 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { ActiveTarget, TargetState } from '../types'
+
+/**
+ * Shows the active tenantree target permanently above the prompt:
+ * organization / landscape / system, kind (production highlighted), region,
+ * subaccount and the right from the customer's IAS. The value comes from the
+ * structured content every tenantree tool returns; at session start the
+ * plugin reads it once itself (read-only tool).
+ */
+const target = atom({ plugin: 'tenantree', key: 'target' } as const, { status: 'unknown' } as TargetState)
+
+const TOOL_PREFIX = 'mcp__plugin_tenantree_tenantree__'
+const KIND: Record<ActiveTarget['kind'], string> = { production: 'PRODUKTION', quality: 'Qualitätssicherung', development: 'Entwicklung', other: 'Sonstige' }
+const RIGHT: Record<ActiveTarget['right'], string> = { write: 'Lesen und Schreiben', read: 'Lesen', none: 'keine Berechtigung' }
+
+/** Finds `structuredContent.activeTarget` in whatever shape a tool result arrives. */
+function activeTargetOf(value: unknown, depth = 0): ActiveTarget | null | undefined {
+  if (!value || typeof value !== 'object' || depth > 4) return undefined
+  const v = value as Record<string, unknown>
+  const sc = v.structuredContent as Record<string, unknown> | undefined
+  if (sc && typeof sc === 'object' && 'activeTarget' in sc) return (sc.activeTarget ?? null) as ActiveTarget | null
+  if ('activeTarget' in v && (v.activeTarget === null || typeof v.activeTarget === 'object')) return v.activeTarget as ActiveTarget | null
+  for (const child of Object.values(v)) {
+    const found = activeTargetOf(child, depth + 1)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+export const register: Register = on => {
+  const remember = async ($: EngineInterface, found: ActiveTarget | null | undefined) => {
+    if (found === undefined) return
+    const at = await $.clock.now()
+    await update($, target, (): TargetState => ({ status: 'known', target: found, at }))
+  }
+
+  on('session.start', async ($, e, next) => {
+    const result = await next(e)
+    // Read once, without blocking the start; a server that needs sign-in stays "unknown".
+    void (async () => {
+      try {
+        const connected = await $.mcp.connect('tenantree')
+        if (!connected.isConnected) return
+        const answer = await $.mcp.call(connected.server, 'tenantree_landscape_query', {})
+        if (!answer.isError) await remember($, activeTargetOf(answer))
+      } catch {
+        // The band then simply shows that the target is not known yet.
+      }
+    })()
+    return result
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const result = await next(e)
+    if (typeof e.tool === 'string' && e.tool.startsWith(TOOL_PREFIX)) await remember($, activeTargetOf(result))
+    return result
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const state = await read($, target)
+    if (state.status === 'unknown') return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const t = state.target
+    if (!t) {
+      return (
+        <Box>
+          <Text dimColor>tenantree · kein aktives Ziel – bitte eine Landschaft wählen</Text>
+        </Box>
+      )
+    }
+    const isProduction = t.kind === 'production'
+    const sub = t.subaccountId ? ` · Subaccount ${t.subaccountId.slice(0, 8)}…` : ''
+    const right = t.signedIn ? RIGHT[t.right] : 'nicht am IAS angemeldet'
+    return (
+      <Box>
+        <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
+        <Text bold>tenantree · {t.organization} / {t.landscape} / {t.system}</Text>
+        <Text color={isProduction ? 'error' : undefined} bold={isProduction}> · {KIND[t.kind]}</Text>
+        <Text dimColor> · {t.region}{sub} · {right}</Text>
+      </Box>
+    )
+  })
+}
