@@ -61,6 +61,9 @@ export const register: Register = on => {
       try {
         const connected = await $.mcp.connect('tenantree')
         if (!connected.isConnected) return
+        // The account comes from the profile, the target from the landscapes.
+        const profile = await $.mcp.call(connected.server, 'tenantree_profile_read', {})
+        if (!profile.isError) await remember($, profile)
         const answer = await $.mcp.call(connected.server, 'tenantree_landscape_query', {})
         if (!answer.isError) await remember($, answer)
       } catch {
@@ -82,11 +85,13 @@ export const register: Register = on => {
     if (state.status === 'unknown') return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const t = state.target
-    const account = state.account ? ` · angemeldet als ${state.account}` : ''
+    // The account sits on the right, the target on the left.
+    const account = state.account ? <Text dimColor>angemeldet als {state.account}</Text> : null
     if (!t) {
       return (
-        <Box>
-          <Text dimColor>tenantree{account} · kein aktives Ziel – bitte eine Landschaft wählen</Text>
+        <Box justifyContent="space-between">
+          <Text dimColor>tenantree · kein aktives Ziel – bitte eine Landschaft wählen</Text>
+          {account}
         </Box>
       )
     }
@@ -94,11 +99,14 @@ export const register: Register = on => {
     const sub = t.subaccountId ? ` · Subaccount ${t.subaccountId.slice(0, 8)}…` : ''
     const right = t.signedIn ? RIGHT[t.right] : 'nicht am IAS angemeldet'
     return (
-      <Box>
-        <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
-        <Text bold>tenantree · {t.organization} / {t.landscape} / {t.system}</Text>
-        <Text color={isProduction ? 'error' : undefined} bold={isProduction}> · {KIND[t.kind]}</Text>
-        <Text dimColor> · {t.region}{sub} · {right}{account}</Text>
+      <Box justifyContent="space-between">
+        <Box>
+          <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
+          <Text bold>tenantree · {t.organization} / {t.landscape} / {t.system}</Text>
+          <Text color={isProduction ? 'error' : undefined} bold={isProduction}> · {KIND[t.kind]}</Text>
+          <Text dimColor> · {t.region}{sub} · {right}</Text>
+        </Box>
+        {account}
       </Box>
     )
   })
