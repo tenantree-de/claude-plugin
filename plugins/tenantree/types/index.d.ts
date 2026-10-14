@@ -11,7 +11,7 @@ export type ActiveTarget = {
 }
 
 /** unknown: not read yet or tenantree not connected; null: connected, no active target. */
-export type TargetState = { status: 'unknown' } | { status: 'known'; target: ActiveTarget | null; at: number }
+export type TargetState = { status: 'unknown' } | { status: 'known'; target: ActiveTarget | null; account?: string; at: number }
 
 declare module 'claude-code' {
   interface PluginState {

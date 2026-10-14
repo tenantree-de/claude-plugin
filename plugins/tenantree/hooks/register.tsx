@@ -30,13 +30,30 @@ function activeTargetOf(value: unknown, depth = 0): ActiveTarget | null | undefi
   return undefined
 }
 
-export const register: Register = on => {
-  const remember = async ($: EngineInterface, found: ActiveTarget | null | undefined) => {
-    if (found === undefined) return
-    const at = await $.clock.now()
-    await update($, target, (): TargetState => ({ status: 'known', target: found, at }))
+/** Finds `structuredContent.signedInAs` (the tenantree account) in a tool result. */
+function accountOf(value: unknown, depth = 0): string | undefined {
+  if (!value || typeof value !== 'object' || depth > 4) return undefined
+  const v = value as Record<string, unknown>
+  if (typeof v.signedInAs === 'string' && v.signedInAs) return v.signedInAs
+  for (const child of Object.values(v)) {
+    const found = accountOf(child, depth + 1)
+    if (found) return found
   }
+  return undefined
+}
 
+/** Keeps the active target and the account from a tenantree tool result. */
+async function remember($: EngineInterface, result: unknown) {
+  const found = activeTargetOf(result)
+  if (found === undefined) return
+  const account = accountOf(result)
+  const at = await $.clock.now()
+  await update($, target, (prev): TargetState => ({
+    status: 'known', target: found, account: account ?? (prev.status === 'known' ? prev.account : undefined), at,
+  }))
+}
+
+export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     // Read once, without blocking the start; a server that needs sign-in stays "unknown".
@@ -45,7 +62,7 @@ export const register: Register = on => {
         const connected = await $.mcp.connect('tenantree')
         if (!connected.isConnected) return
         const answer = await $.mcp.call(connected.server, 'tenantree_landscape_query', {})
-        if (!answer.isError) await remember($, activeTargetOf(answer))
+        if (!answer.isError) await remember($, answer)
       } catch {
         // The band then simply shows that the target is not known yet.
       }
@@ -55,7 +72,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
-    if (typeof e.tool === 'string' && e.tool.startsWith(TOOL_PREFIX)) await remember($, activeTargetOf(result))
+    if (typeof e.tool === 'string' && e.tool.startsWith(TOOL_PREFIX)) await remember($, result)
     return result
   })
 
@@ -65,10 +82,11 @@ export const register: Register = on => {
     if (state.status === 'unknown') return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const t = state.target
+    const account = state.account ? ` · angemeldet als ${state.account}` : ''
     if (!t) {
       return (
         <Box>
-          <Text dimColor>tenantree · kein aktives Ziel – bitte eine Landschaft wählen</Text>
+          <Text dimColor>tenantree{account} · kein aktives Ziel – bitte eine Landschaft wählen</Text>
         </Box>
       )
     }
@@ -80,7 +98,7 @@ export const register: Register = on => {
         <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
         <Text bold>tenantree · {t.organization} / {t.landscape} / {t.system}</Text>
         <Text color={isProduction ? 'error' : undefined} bold={isProduction}> · {KIND[t.kind]}</Text>
-        <Text dimColor> · {t.region}{sub} · {right}</Text>
+        <Text dimColor> · {t.region}{sub} · {right}{account}</Text>
       </Box>
     )
   })
