@@ -2,8 +2,7 @@
   "mcpServers": {
     "tenantree": {
       "type": "http",
-      "url": "https://portal.tenantree.de/mcp",
-      "alwaysLoad": true
+      "url": "https://portal.tenantree.de/mcp"
     }
   }
 }
