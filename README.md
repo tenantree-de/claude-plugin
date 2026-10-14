@@ -12,14 +12,14 @@ Dieses Repository ist der Plugin-Marketplace von tenantree. Es enthält keine ku
 ## Installation
 
 ```
-claude plugin marketplace add JSA-SC/tenantree-plugin
+claude plugin marketplace add tenantree-de/tenantree-plugin
 claude plugin install tenantree@tenantree
 ```
 
 Alternativ in einer laufenden Claude-Code-Sitzung:
 
 ```
-/plugin marketplace add JSA-SC/tenantree-plugin
+/plugin marketplace add tenantree-de/tenantree-plugin
 /plugin install tenantree@tenantree
 ```
 
