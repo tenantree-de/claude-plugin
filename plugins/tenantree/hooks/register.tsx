@@ -168,10 +168,13 @@ export const register: Register = on => {
   // plugin's server and passes it no _meta, so the mod draws the card itself under the tool call.
   // It shows the plan and its status; approving stays on the approval page (personal sign-in), so the
   // model can still not approve on its own.
-  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+  // Drawn with the call's row itself (ToolUse): the Code tab folds a call's result away, so a card under
+  // the result (ToolResult) would stay hidden until the person unfolds it (15.10.2026).
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     if (!TENANTREE_TOOL.test(String(e.props.tool)) || e.props.isErrored) return next(e)
     const card = (await read($, plans))[e.props.tool_use_id]
     if (!card) return next(e)
+    const row = await next(e)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const p = card.parts
     const t = await read($, target)
@@ -190,6 +193,8 @@ export const register: Register = on => {
         ? `${card.decision === 'approve' ? (card.ok === false ? 'Approved, but not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${card.by ? ` by ${card.by}` : ''}${card.at ? ` at ${time(card.at)}` : ''}${card.channel === 'page' ? ' on the approval page' : ''}.`
         : null
     return (
+      <Box flexDirection="column">
+      {row}
       <Box flexDirection="column" borderStyle="round" borderColor={card.status === 'open' ? 'suggestion' : undefined} paddingX={1}>
         <Box justifyContent="space-between">
           <Text bold>{card.title ?? 'Plan'}</Text>
@@ -211,6 +216,7 @@ export const register: Register = on => {
         </Box>
         {decided && card.first ? <Text dimColor>{card.first}</Text> : null}
         {decided && card.url ? <Link href={card.url} label="Show the decision in the browser" /> : null}
+      </Box>
       </Box>
     )
   })
