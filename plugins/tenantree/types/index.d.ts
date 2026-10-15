@@ -25,8 +25,33 @@ export type TargetState =
   | { status: 'unknown' }
   | { status: 'known'; target: ActiveTarget | null; account?: string; targets?: Target[]; at: number }
 
-/** What the plan card knows about one plan after a press. */
-export type PlanCardState = { status: 'busy' | 'approved' | 'rejected' | 'failed' | 'closed'; text: string; handover: string | null }
+/** The parsed plan as the server shows it on every card. */
+export type PlanParts = {
+  headline: string
+  facts: Array<{ label: string; value: string }>
+  values: Array<{ label: string; value: string }>
+  cost: { rows: Array<{ label: string; value: string }>; notes: string[]; traps: string[] } | null
+  warnings: string[]
+  notes: string[]
+}
+
+/** What the plan card of one tool call knows (tenantree_plan_status with details; never the code). */
+export type PlanCardState = {
+  planId: string
+  status: 'loading' | 'open' | 'decided' | 'closed' | 'unknown'
+  title?: string
+  level?: string
+  parts?: PlanParts
+  expiresAt?: number
+  url?: string | null
+  decision?: 'approve' | 'reject'
+  by?: string | null
+  channel?: string
+  ok?: boolean
+  at?: number
+  first?: string
+  checkedAt: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -35,7 +60,6 @@ declare module 'claude-code' {
       server: string | null
       message: string | null
       plans: Record<string, PlanCardState>
-      probe: string | null
     }
   }
 }
