@@ -7,7 +7,7 @@ export type ActiveTarget = {
   region: string
   subaccountId: string | null
   signedIn: boolean
-  right: 'none' | 'read' | 'write'
+  right: 'none' | 'user' | 'admin'
 }
 
 /** unknown: not read yet or tenantree not connected; null: connected, no active target. */

@@ -14,7 +14,7 @@ const target = atom({ plugin: 'tenantree', key: 'target' } as const, { status: '
 
 const TOOL_PREFIX = 'mcp__plugin_tenantree_tenantree__'
 const KIND: Record<ActiveTarget['kind'], string> = { production: 'PRODUKTION', quality: 'Qualitätssicherung', development: 'Entwicklung', other: 'Sonstige' }
-const RIGHT: Record<ActiveTarget['right'], string> = { write: 'Lesen und Schreiben', read: 'Lesen', none: 'keine Berechtigung' }
+const RIGHT: Record<ActiveTarget['right'], string> = { admin: 'Nutzung und Verwaltung', user: 'Nutzung', none: 'nicht freigegeben' }
 
 /** Finds `structuredContent.activeTarget` in whatever shape a tool result arrives. */
 function activeTargetOf(value: unknown, depth = 0): ActiveTarget | null | undefined {
