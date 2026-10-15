@@ -34,7 +34,6 @@ const textOf = (r: unknown): string => {
 /** mcp__<server>__<tool> of a tenantree server: a server whose name ends with "tenantree". */
 const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
 const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
-const RIGHT: Record<ActiveTarget['right'], string> = { admin: 'use and administration', user: 'use', none: 'not admitted' }
 
 /** Finds a field of the structured content in whatever shape a tool result arrives. */
 function fieldOf(value: unknown, name: string, depth = 0): unknown {
@@ -251,13 +250,7 @@ export const register: Register = on => {
           <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
           <Text bold>tenantree </Text>
           {picker}
-          {t ? (
-            <Text color={isProduction ? 'error' : undefined} bold={isProduction} dimColor={!isProduction}>
-              {' '}· {KIND[t.kind]} · {t.region} · {t.signedIn ? RIGHT[t.right] : 'not signed in at the IAS'}
-            </Text>
-          ) : (
-            <Text dimColor> · please choose a subaccount</Text>
-          )}
+          {t ? null : <Text dimColor> · please choose a subaccount</Text>}
           {note ? <Text dimColor> · {note}</Text> : null}
         </Box>
         {account}
