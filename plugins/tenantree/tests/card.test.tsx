@@ -26,4 +26,8 @@ test('the plan card draws on the desktop under the tool call', async ($, on) => 
     expect(json).toContain('Undeploy integration artifact')
     expect(json).toContain('Approve or reject on the approval page')
   }
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
+  const json = JSON.stringify(await band.drawn())
+  expect(json).toContain('Approval pending')
+  expect(json).toContain('Approve or reject')
 })

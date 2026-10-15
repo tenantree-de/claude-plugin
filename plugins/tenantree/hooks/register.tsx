@@ -136,6 +136,7 @@ export const register: Register = on => {
     if (m) {
       // The band and the card must never disturb the tool call itself.
       await remember($, result).catch(() => {})
+      if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
       const planId = PLAN_LINK.exec(textOf(result))?.[1]
       const id = e.tool_use_id
       if (planId && id) {
@@ -149,6 +150,8 @@ export const register: Register = on => {
 
   // Open cards learn their decision when the person comes back to the chat.
   on('prompt.submit', async ($, e, next) => {
+    // The first read at session start may come before the server is connected: try again.
+    if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
     const all = await read($, plans).catch(() => ({} as Record<string, PlanCardState>))
     for (const [id, c] of Object.entries(all)) if (c.status === 'open' || c.status === 'loading') void loadCard($, id, c.planId).catch(() => {})
     return next(e)
@@ -224,15 +227,21 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const state = await read($, target)
-    if (state.status === 'unknown') return next(e)
+    // OPEN APPROVALS IN THE BAND (15.10.2026): the Code tab folds tool calls ("2 tools used"), so the
+    // card under a call stays hidden; the band above the prompt is always in view.
+    const now = await $.clock.now()
+    const cards = Object.entries(await read($, plans)).filter(([, c]) =>
+      c.status === 'open' || c.status === 'loading' || (c.status === 'decided' && c.at !== undefined && now - c.at < 10 * 60 * 1000),
+    )
+    if (state.status === 'unknown' && cards.length === 0) return next(e)
     const els = $.ui.resolve(e)
-    const { Box, Text } = els
+    const { Box, Text, Link, Button } = els
     // The picker where the surface draws one (terminal and desktop; not the mobile app).
     const Select = 'Select' in els ? els.Select : null
-    const t = state.target
+    const t = state.status === 'known' ? state.target : null
     const note = await read($, message)
-    const account = state.account ? <Text dimColor>{state.account}</Text> : null
-    const targets = state.targets ?? []
+    const account = state.status === 'known' && state.account ? <Text dimColor>{state.account}</Text> : null
+    const targets = state.status === 'known' ? state.targets ?? [] : []
     const active = targets.find(x => x.active)
     const choose = async (id: string) => {
       const name = await serverOf($)
@@ -250,16 +259,43 @@ export const register: Register = on => {
       ) : (
         <Text bold>{t ? path(t) : 'No active target'}</Text>
       )
+    const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+    const updateAll = () => {
+      for (const [id, c] of cards) void loadCard($, id, c.planId).catch(() => {})
+    }
+    const approvals = cards.length ? (
+      <Box flexDirection="column" marginTop={1}>
+        {cards.map(([id, c]) => (
+          <Box key={id} gap={1}>
+            {c.status === 'decided' ? (
+              <Text color={c.decision === 'approve' && c.ok !== false ? 'success' : c.ok === false ? 'error' : undefined}>
+                {c.decision === 'approve' ? (c.ok === false ? '✗ Not carried out:' : '✓ Approved:') : '– Rejected:'}
+              </Text>
+            ) : (
+              <Text color="warning">◆ Approval pending:</Text>
+            )}
+            <Text bold>{c.title ?? 'Plan'}</Text>
+            {c.status === 'open' ? <Text dimColor>until {time(c.expiresAt)}</Text> : null}
+            {c.status === 'decided' && c.first ? <Text dimColor>{c.first}</Text> : null}
+            {c.status === 'open' && c.url ? <Link href={c.url} label="Approve or reject" /> : null}
+          </Box>
+        ))}
+        {cards.some(([, c]) => c.status !== 'decided') ? <Box><Button key="approvals-update" label="Update status" onPress={updateAll} /></Box> : null}
+      </Box>
+    ) : null
     return (
-      <Box justifyContent="space-between">
-        <Box>
-          <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
-          <Text bold>tenantree </Text>
-          {picker}
-          {t ? null : <Text dimColor> · please choose a subaccount</Text>}
-          {note ? <Text dimColor> · {note}</Text> : null}
+      <Box flexDirection="column">
+        <Box justifyContent="space-between">
+          <Box>
+            <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
+            <Text bold>tenantree </Text>
+            {state.status === 'unknown' ? <Text dimColor>reading the target …</Text> : picker}
+            {state.status === 'known' && !t ? <Text dimColor> · please choose a subaccount</Text> : null}
+            {note ? <Text dimColor> · {note}</Text> : null}
+          </Box>
+          {account}
         </Box>
-        {account}
+        {approvals}
       </Box>
     )
   })
