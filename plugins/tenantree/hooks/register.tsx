@@ -376,7 +376,8 @@ export const register: Register = on => {
           </Box>
           <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
             {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
-            <Text color="#c9ced4" bold>tenantree</Text>
+            {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
+            {t?.dashboardUrl ? <Link href={t.dashboardUrl} label="tenantree" /> : <Text color="#c9ced4" bold>tenantree</Text>}
           </Box>
         </Box>
         {signinOpen ? (

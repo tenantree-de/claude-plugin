@@ -8,6 +8,7 @@ export type ActiveTarget = {
   subaccountId: string | null
   signedIn: boolean
   right: 'none' | 'user' | 'admin'
+  dashboardUrl?: string
 }
 
 /** A system the person may choose (tenantree_landscape_query). */
