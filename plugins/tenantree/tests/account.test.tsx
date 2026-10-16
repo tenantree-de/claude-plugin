@@ -8,15 +8,15 @@ const PROFILE = JSON.stringify({
   activeTarget: { organization: 'Brauer IT', landscape: 'BICS BTP', system: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' },
 })
 
-test('TEPLU-12: the band shows the account, Sign out signs the connection out, then offers Sign in', async ($, on) => {
+test('TEPLU-12: the band shows the account with Sign out to the portal; a call that asks for a sign-in turns it into Sign in', async ($, on) => {
   const calls: string[] = []
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false, reason: 'auth', message: 'Needs sign-in.' } }) as never)
   on('tool.call', async (_$, e) => {
     calls.push(String(e.tool))
-    const text = e.tool === `${P}tenantree_session_delete` ? 'Signed out of tenantree (person@example.test). The next call requires a new sign-in.' : PROFILE
-    return { ref: 1, result: [{ type: 'text', text }], text } as never
+    if (e.tool === `${P}tenantree_landscape_query`) return { ref: 1, result: [{ type: 'text', text: 'Sign-in required.' }], text: 'Sign-in required.', isError: true } as never
+    return { ref: 1, result: [{ type: 'text', text: PROFILE }], text: PROFILE } as never
   })
   on('store.set', async () => ({ value: undefined }) as never)
   await $.tool.call({ tool: `${P}tenantree_profile_read`, tool_use_id: 'toolu_p' } as never)
@@ -27,11 +27,13 @@ test('TEPLU-12: the band shows the account, Sign out signs the connection out, t
 
   // The model cannot sign the person out.
   const denied = (await $.tool.call({ tool: `${P}tenantree_session_delete`, tool_use_id: 'toolu_m' } as never)) as { deny?: string }
-  expect(String(denied.deny)).toContain('Sign out button')
+  expect(String(denied.deny)).toContain('Sign out')
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
-  await band.press({ key: 'signout' } as never)
-  expect(calls).toContain(`${P}tenantree_session_delete`)
+  expect(before).toContain('https://portal.tenantree.de/security#connections')
+
+  // Signed out in the portal: the next tenantree answer asks for a sign-in.
+  await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
   const after = JSON.stringify(await band.drawn())
   expect(after).toContain('Not signed in to tenantree')
   expect(after).toContain('Sign in')

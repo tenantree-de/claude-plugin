@@ -405,6 +405,7 @@ async function refresh($: EngineInterface) {
   const name = await serverOf($)
   if (!name) return
   const profile = await $.mcp.call(name, 'tenantree_profile_read', {})
+  if (profile.isError && NEEDS_SIGNIN.test(textOf(profile))) return signedOut($)
   if (!profile.isError) await remember($, profile)
   const landscapes = await $.mcp.call(name, 'tenantree_landscape_query', {})
   if (!landscapes.isError) await remember($, landscapes)
@@ -510,34 +511,20 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
   }
 }
 
-/** THE PERSON SIGNS OUT (TEPLU-12, TEN-537): the server revokes every token of this connection. */
-/** Set while the Sign out button runs: the guard below lets only this call through, never the model's. */
-let signingOut = false
+/**
+ * THE PERSON SIGNS OUT IN THE PORTAL (TEPLU-12, TEN-537, 17.10.2026): the auto mode of Claude Code gives no
+ * verdict for a sign-out the plugin calls itself, so Sign out opens the connections of the profile in the
+ * portal. The band notices the sign-out with the next answer that asks for a sign-in.
+ */
+const SIGNOUT_URL = `${PORTAL}/security#connections`
+const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new )?(?:sign-in|authentication)/i
 
-async function signOut($: EngineInterface) {
-  await update($, message, () => 'Signing out …')
-  signingOut = true
-  try {
-    const r = await pressed(
-      $,
-      'tenantree_session_delete',
-      {},
-      'Sign out',
-      'The user pressed the "Sign out" button in the tenantree band and asks to sign this Claude Code connection out of tenantree. Signing out revokes the tenantree tokens of this connection; nothing in SAP BTP is changed.',
-    ).finally(() => {
-      signingOut = false
-    })
-    if (r.isError) throw new Error(r.text ?? textOf(r))
-    await update($, account, (): AccountState => ({ status: 'signedOut' }))
-    await update($, target, (): TargetState => ({ status: 'unknown' }))
-    await update($, server, () => null)
-    await update($, signin, () => null)
-    await $.store.set(STORE_KEY, null).catch(() => {})
-    await update($, message, () => null)
-  } catch (err) {
-    const reason = cut(String((err as Error)?.message ?? err).split('\n')[0] ?? '', 90)
-    await update($, message, () => `Sign-out failed${reason ? `: ${reason}` : '.'}`)
-  }
+async function signedOut($: EngineInterface) {
+  await update($, account, (): AccountState => ({ status: 'signedOut' }))
+  await update($, target, (): TargetState => ({ status: 'unknown' }))
+  await update($, server, () => null)
+  await update($, signin, () => null)
+  await $.store.set(STORE_KEY, null).catch(() => {})
 }
 
 /** THE PERSON SIGNS IN: Claude Code holds the OAuth sign-in; connecting starts it where the host can. */
@@ -592,12 +579,10 @@ export const register: Register = on => {
   })
 
   // Only the Sign out button signs the connection out (TEN-537): never the model on its own.
-  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) => {
-    if (!signingOut) {
-      return { deny: 'Signing out is done by the person with the Sign out button of the tenantree band.' }
-    }
-    return next(e)
-  })
+  // Signing out is the person's own step in the portal (TEN-537): never the model's.
+  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async () => ({
+    deny: 'Signing out is done by the person: Sign out in the tenantree band opens the connections in the portal.',
+  }))
 
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
@@ -609,6 +594,10 @@ export const register: Register = on => {
       await remember($, result)
       const text = textOf(result)
       const failed = Boolean((result as { isError?: boolean } | null)?.isError)
+      if (failed && NEEDS_SIGNIN.test(text)) {
+        await signedOut($)
+        return result
+      }
       const at = await $.clock.now()
       if (tool === 'tenantree_landscape_signin') {
         const url = SIGNIN_LINK.exec(text)?.[0]
@@ -891,7 +880,7 @@ export const register: Register = on => {
               <Box flexDirection="column">
                 <Box justifyContent="space-between" alignItems="center" gap={2}>
                   <Text dimColor>Signed in as</Text>
-                  <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+                  <Link href={SIGNOUT_URL} label="Sign out" />
                 </Box>
                 <Text>{email}</Text>
               </Box>
