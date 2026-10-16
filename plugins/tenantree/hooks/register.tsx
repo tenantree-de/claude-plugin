@@ -850,9 +850,7 @@ export const register: Register = on => {
     }
     const isProduction = t?.kind === 'production'
     const picker =
-      acc.status === 'signedOut' ? (
-        <Text color="warning">◆ Not signed in to tenantree</Text>
-      ) : state.status === 'unknown' ? (
+      state.status === 'unknown' ? (
         <Text dimColor>Reading the subaccount …</Text>
       ) : Select && targets.length > 0 ? (
         <Select key="target" options={targets.map(x => ({ value: x.id, label: path(x) }))} value={active?.id} onSelect={(v: string) => void choose(v)} />
@@ -860,28 +858,41 @@ export const register: Register = on => {
         <Text bold>{t ? path(t) : 'No subaccount chosen'}</Text>
       )
     const notAdmitted = state.status === 'known' && t && (!t.signedIn || t.right === 'none')
+    const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
     return (
       <Box flexDirection="column">
+        {/* TEPLU-12 (operator, 16.10.2026): the account above, the picker below it, the mark on the right. */}
         <Box justifyContent="space-between" alignItems="center">
           <Box alignItems="center" gap={1}>
-            {isProduction ? <Text color="error" bold>● Production</Text> : null}
-            {picker}
-            {note ? <Text dimColor>{note}</Text> : null}
+            {acc.status === 'signedOut' ? (
+              <>
+                <Text color="warning">◆ Not signed in to tenantree</Text>
+                <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+              </>
+            ) : email ? (
+              <>
+                <Text dimColor>Signed in as</Text>
+                <Text>{email}</Text>
+                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+              </>
+            ) : (
+              <Text dimColor>Reading the account …</Text>
+            )}
           </Box>
-          <Box alignItems="center" gap={1}>
-            {acc.status === 'signedIn' ? <Text dimColor>{acc.email}</Text> : null}
-            {acc.status === 'signedIn' ? (
-              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-            ) : acc.status === 'signedOut' ? (
-              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-            ) : null}
           <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
             {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
             {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
             {t?.dashboardUrl ? <Link href={t.dashboardUrl} label="tenantree" /> : <Text color="#c9ced4" bold>tenantree</Text>}
           </Box>
-          </Box>
         </Box>
+        {acc.status === 'signedOut' ? null : (
+          <Box alignItems="center" gap={1} marginTop={1}>
+            {isProduction ? <Text color="error" bold>● Production</Text> : null}
+            {picker}
+            {note ? <Text dimColor>{note}</Text> : null}
+          </Box>
+        )}
+        {acc.status === 'signedOut' && note ? <Text dimColor>{note}</Text> : null}
         {signinOpen ? (
           <Box gap={1} marginTop={1} alignItems="center">
             <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
