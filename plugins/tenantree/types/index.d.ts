@@ -54,6 +54,12 @@ export type PlanTile = {
   busy?: 'approve' | 'reject'
 }
 
+/** One section of the cost tile: rows (label and value) and lines of text. */
+export type CostSection = { name: string; rows: Row[]; lines: string[] }
+
+/** The cost tile: read from the text of tenantree_cost_query (the plugin calls nothing for it). */
+export type CostTile = { sections: CostSection[]; risks: string[]; unchecked: string[]; url: string | null }
+
 /** The tiles a reply shows after its text: the end of that text and the tiles' tool use ids. */
 export type Attached = { tail: string; ids: string[] }
 
@@ -68,6 +74,7 @@ declare module 'claude-code' {
       attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
       expanded: Record<string, boolean>
+      costs: Record<string, CostTile>
     }
   }
 }

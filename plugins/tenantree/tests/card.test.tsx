@@ -83,3 +83,40 @@ test('the tile learns by itself that its plan was approved on the page', async (
   expect(tile).toContain('Approved and carried out')
   expect(tile).not.toContain('Update status')
 })
+
+const COST = [
+  'THE ACCOUNT NOW',
+  '  Commercial model of the global account: not read (needs the account access cis/central).',
+  '  SAP Integration Suite edition: Free plan (detected from the subscription it-cpi049-prov, plan free).',
+  '  Term: 90 days, then the Standard Edition.',
+  '',
+  'COST RISKS',
+  '  Integration Suite (plan free): free of charge for 90 days since 2026-09-25. 69 days remaining.',
+  '',
+  'NOT CHECKED',
+  '  Cloud Foundry memory and cloud credits (needs the usage access)',
+  '',
+  'Prices: SAP Discovery Center with source and date per entry.',
+  '',
+  'Graphical view in the Tenantree Dashboard: https://portal.tenantree.de/t/x/dashboard/#/costs',
+  '',
+  'tenantree target: Brauer IT → BICS Labor → bics-labor (development)',
+].join('\n')
+
+test('the cost assessment becomes a tile after the reply', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: COST }], text: COST }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_cost_query', tool_use_id: 'toolu_c' } as never)
+  await $.turn.complete?.({ answer: 'Here are the costs.', durationMs: 1, isAborted: false, turnId: 'tc', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Here are the costs.', isFirstOfReply: true } } as never)
+  const tile = JSON.stringify(await reply.drawn())
+  expect(tile).toContain('Cost risks')
+  expect(tile).toContain('69 days remaining')
+  expect(tile).toContain('SAP Integration Suite edition')
+  expect(tile).toContain('Open in the Tenantree Dashboard')
+  expect(tile).not.toContain('tenantree target')
+})

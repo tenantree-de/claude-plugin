@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ActiveTarget, Attached, PlanTile, Row, Target, TargetState } from '../types'
+import type { ActiveTarget, Attached, CostSection, CostTile, PlanTile, Row, Target, TargetState } from '../types'
 
 /**
  * tenantree in Claude Code (operator, 15./16.10.2026):
@@ -24,6 +24,7 @@ const message = atom({ plugin: 'tenantree', key: 'message' } as const, null as s
 const tiles = atom({ plugin: 'tenantree', key: 'tiles' } as const, {} as Record<string, PlanTile>)
 const turn = atom({ plugin: 'tenantree', key: 'turn' } as const, [] as string[])
 const attached = atom({ plugin: 'tenantree', key: 'attached' } as const, [] as Attached[])
+const costs = atom({ plugin: 'tenantree', key: 'costs' } as const, {} as Record<string, CostTile>)
 const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
 
@@ -124,6 +125,37 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
     }
   }
   return { title: title || 'Plan', level, target, headline, facts, values, warnings }
+}
+
+// --- The cost text -----------------------------------------------------------
+
+const VIEW_LINK = /Graphical view in the Tenantree Dashboard: (https:\/\/\S+)/
+const HEADING = /^[A-Z][A-Z ()/-]{2,}$/
+
+/** The cost assessment as its text states it, by section (THE ACCOUNT NOW, COST RISKS, NOT CHECKED, ...). */
+function costOf(text: string): CostTile {
+  const sections: CostSection[] = []
+  const risks: string[] = []
+  const unchecked: string[] = []
+  let current: CostSection | null = null
+  for (const raw of text.split('\n')) {
+    const t = raw.trim()
+    if (!t || TARGET_LINE.test(t) || VIEW_LINK.test(t) || /^Prices:/.test(t)) continue
+    if (HEADING.test(t)) {
+      current = { name: t.charAt(0) + t.slice(1).toLowerCase(), rows: [], lines: [] }
+      if (!/^COST RISKS$|^NOT CHECKED$/.test(t)) sections.push(current)
+      continue
+    }
+    if (!current) continue
+    if (/^Cost risks$/.test(current.name)) risks.push(t)
+    else if (/^Not checked$/.test(current.name)) unchecked.push(t)
+    else {
+      const m = /^([^:]{2,60}):\s+(.+)$/.exec(t)
+      if (m && m[1] && m[2] && !/^https?$/.test(m[1])) current.rows.push({ label: m[1], value: m[2] })
+      else current.lines.push(t)
+    }
+  }
+  return { sections, risks, unchecked, url: VIEW_LINK.exec(text)?.[1] ?? null }
 }
 
 // --- Target and sign-in -----------------------------------------------------
@@ -320,8 +352,13 @@ export const register: Register = on => {
         const t = await read($, target)
         if (url) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
       } else if (!failed && !tool.startsWith('tenantree_')) await update($, signin, () => null)
-      const link = tool === 'tenantree_plan_read' ? null : PLAN_LINK.exec(text)
       const id = e.tool_use_id
+      // THE COST TILE (16.10.2026): the assessment as a tile after the reply.
+      if (tool === 'tenantree_cost_query' && id && !failed) {
+        await update($, costs, all => ({ ...all, [id]: costOf(text) }))
+        await update($, turn, ids => [...ids, id])
+      }
+      const link = tool === 'tenantree_plan_read' ? null : PLAN_LINK.exec(text)
       if (link && link[1] && id) {
         const tile: PlanTile = { ...planOf(text), planId: link[1], url: link[0], expiresAt: at + PLAN_MS, status: 'open' }
         await update($, tiles, all => ({ ...all, [id]: tile }))
@@ -377,22 +414,53 @@ export const register: Register = on => {
     const hit = list.find(a => a.tail && text.endsWith(a.tail))
     if (!hit) return next(e)
     const all = await read($, tiles)
+    const allCosts = await read($, costs)
     const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
-    if (!shown.length) return next(e)
+    const shownCosts = hit.ids.map(id => [id, allCosts[id]] as const).filter((x): x is readonly [string, CostTile] => Boolean(x[1]))
+    if (!shown.length && !shownCosts.length) return next(e)
     const reply = await next(e)
     const opened = await read($, expanded)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const now = await $.clock.now()
-    const rows = (rs: Row[]) =>
+    const rows = (rs: Row[], width = 22) =>
       rs.map(f => (
         <Box key={f.label}>
-          <Box width={22}><Text dimColor>{f.label}</Text></Box>
+          <Box width={width}><Text dimColor>{f.label}</Text></Box>
           <Text>{f.value}</Text>
         </Box>
       ))
     return (
       <Box flexDirection="column" gap={1}>
         {reply}
+        {shownCosts.map(([id, c]) => (
+          <Box key={id} flexDirection="column" borderStyle="round" paddingX={1}>
+            <Box justifyContent="space-between">
+              <Text bold>Costs</Text>
+              {c.url ? <Link href={c.url} label="Open in the Tenantree Dashboard" /> : null}
+            </Box>
+            {c.risks.length ? (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color="warning" bold>Cost risks</Text>
+                {c.risks.map(r => <Text key={r} color="warning">◆ {r}</Text>)}
+              </Box>
+            ) : (
+              <Text color="success">No cost risk found.</Text>
+            )}
+            {c.sections.map(sec => (
+              <Box key={sec.name} flexDirection="column" marginTop={1}>
+                <Text dimColor bold>{sec.name}</Text>
+                {rows(sec.rows, 40)}
+                {sec.lines.map(l => <Text key={l} dimColor>{l}</Text>)}
+              </Box>
+            ))}
+            {c.unchecked.length ? (
+              <Box flexDirection="column" marginTop={1}>
+                <Text dimColor bold>Not checked</Text>
+                {c.unchecked.map(u => <Text key={u} dimColor>{u}</Text>)}
+              </Box>
+            ) : null}
+          </Box>
+        ))}
         {shown.map(([id, p]) => {
           const expired = p.status === 'open' && now > p.expiresAt
           const open = p.status === 'open' && !expired
