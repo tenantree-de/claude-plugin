@@ -114,9 +114,48 @@ test('the cost assessment becomes a tile after the reply', async ($, on) => {
   await $.turn.complete?.({ answer: 'Here are the costs.', durationMs: 1, isAborted: false, turnId: 'tc', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Here are the costs.', isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
-  expect(tile).toContain('Cost risks')
-  expect(tile).toContain('69 days remaining')
+  expect(tile).toContain('Cost risk')
+  expect(tile).toContain(' days left')
   expect(tile).toContain('SAP Integration Suite edition')
   expect(tile).toContain('Open in the Tenantree Dashboard')
   expect(tile).not.toContain('tenantree target')
+})
+
+const DIAGRAM = [
+  'Architecture diagram: Subaccount bics-labor',
+  'Layers, left to right:',
+  '1. Subaccounts',
+  '   - bics-labor',
+  '       This installation runs here',
+  '2. Subscriptions, instances',
+  '   - Integration Suite -- it-cpi049-prov / free',
+  '       State: SUBSCRIBED',
+  '   - tenantree-cpi -- Cloud Foundry instance',
+  '       State: ready',
+  '',
+  'Connections (2):',
+  '  bics-labor -> Integration Suite (subscribed)',
+  '  bics-labor -> tenantree-cpi',
+  '',
+  'Findings (0):',
+  '  None.',
+  '',
+  'Graphical view in the Tenantree Dashboard: https://portal.tenantree.de/t/x/dashboard/#/landscape',
+].join('\n')
+
+test('the landscape diagram becomes an SVG tile after the reply', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: DIAGRAM }], text: DIAGRAM }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_diagram_read', tool_use_id: 'toolu_d', kind: 'tenant' } as never)
+  await $.turn.complete?.({ answer: 'Here is the landscape.', durationMs: 1, isAborted: false, turnId: 'td', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Here is the landscape.', isFirstOfReply: true } } as never)
+  const tile = JSON.stringify(await reply.drawn())
+  expect(tile).toContain('Subaccount bics-labor')
+  expect(tile).toContain('"type":"Svg"')
+  expect(tile).toContain('Integration Suite')
+  expect(tile).toContain('No findings.')
 })

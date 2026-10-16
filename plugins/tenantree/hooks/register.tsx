@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ActiveTarget, Attached, CostSection, CostTile, PlanTile, Row, Target, TargetState } from '../types'
+import type { ActiveTarget, Attached, CostSection, CostTile, DiagramTile, PlanTile, Row, Target, TargetState } from '../types'
 
 /**
  * tenantree in Claude Code (operator, 15./16.10.2026):
@@ -24,6 +24,7 @@ const message = atom({ plugin: 'tenantree', key: 'message' } as const, null as s
 const tiles = atom({ plugin: 'tenantree', key: 'tiles' } as const, {} as Record<string, PlanTile>)
 const turn = atom({ plugin: 'tenantree', key: 'turn' } as const, [] as string[])
 const attached = atom({ plugin: 'tenantree', key: 'attached' } as const, [] as Attached[])
+const diagrams = atom({ plugin: 'tenantree', key: 'diagrams' } as const, {} as Record<string, DiagramTile>)
 const costs = atom({ plugin: 'tenantree', key: 'costs' } as const, {} as Record<string, CostTile>)
 const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
@@ -156,6 +157,86 @@ function costOf(text: string): CostTile {
     }
   }
   return { sections, risks, unchecked, url: VIEW_LINK.exec(text)?.[1] ?? null }
+}
+
+// --- The diagram ---------------------------------------------------------------
+
+/** The diagram as its text states it: layers with their nodes, the connections, findings and notes. */
+function diagramOf(text: string): DiagramTile {
+  const lines = text.split('\n')
+  const tile: DiagramTile = { title: 'Landscape', layers: [], edges: [], findings: [], notes: [], url: VIEW_LINK.exec(text)?.[1] ?? null }
+  let mode: 'none' | 'layers' | 'edges' | 'findings' | 'notes' = 'none'
+  for (const raw of lines) {
+    const t = raw.trim()
+    if (/^```/.test(t) || /^Mermaid:/.test(t)) { mode = 'none'; if (/^Mermaid:/.test(t)) break; continue }
+    const title = /^Architecture diagram:\s*(.+)$/.exec(t)
+    if (title?.[1]) { tile.title = title[1]; continue }
+    if (/^Layers/.test(t)) { mode = 'layers'; continue }
+    if (/^Connections/.test(t)) { mode = 'edges'; continue }
+    if (/^Findings/.test(t)) { mode = 'findings'; continue }
+    if (/^Notes/.test(t)) { mode = 'notes'; continue }
+    if (!t || TARGET_LINE.test(t) || VIEW_LINK.test(t)) continue
+    if (mode === 'layers') {
+      const layer = /^\d+\.\s+(.+)$/.exec(t)
+      if (layer?.[1]) { tile.layers.push({ name: layer[1], nodes: [] }); continue }
+      const node = /^-\s+(.+)$/.exec(t)
+      const current = tile.layers[tile.layers.length - 1]
+      if (node?.[1] && current) {
+        const [name, ...rest] = node[1].split(' -- ')
+        current.nodes.push({ name: (name ?? '').trim(), detail: rest.length ? [rest.join(' -- ').trim()] : [] })
+        continue
+      }
+      const last = current?.nodes[current.nodes.length - 1]
+      if (last) last.detail.push(t)
+    } else if (mode === 'edges') {
+      const m = /^(.+?)\s*-(?:&gt;|>)\s*(.+?)(?:\s*\(([^)]*)\))?$/.exec(t)
+      if (m?.[1] && m[2]) tile.edges.push({ from: m[1].trim(), to: m[2].trim(), label: m[3] ?? null })
+    } else if (mode === 'findings') {
+      if (!/^None\.?$/.test(t)) tile.findings.push(t.replace(/^-\s*/, ''))
+    } else if (mode === 'notes') tile.notes.push(t.replace(/^-\s*/, ''))
+  }
+  return tile
+}
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
+/** The diagram as SVG: one column per layer, a box per node, curved connections (tenantree colours). */
+function diagramSvg(d: DiagramTile): { source: string; width: number; height: number } {
+  const W = 250, H = 50, GAP_X = 90, GAP_Y = 12, TOP = 34, PAD = 16
+  const pos = new Map<string, { x: number; y: number }>()
+  const rows = Math.max(1, ...d.layers.map(l => l.nodes.length))
+  const height = TOP + rows * (H + GAP_Y) + PAD
+  const width = PAD * 2 + d.layers.length * W + Math.max(0, d.layers.length - 1) * GAP_X
+  const parts: string[] = []
+  d.layers.forEach((layer, li) => {
+    const x = PAD + li * (W + GAP_X)
+    const top = TOP + ((rows - layer.nodes.length) * (H + GAP_Y)) / 2
+    parts.push(`<text x="${x}" y="20" font-size="12" font-weight="600" fill="#758ca4">${esc(cut(layer.name.toUpperCase(), 34))}</text>`)
+    layer.nodes.forEach((n, ni) => {
+      const y = top + ni * (H + GAP_Y)
+      pos.set(n.name, { x, y })
+      const first = li === 0
+      parts.push(
+        `<rect x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="${first ? '#e1f4ff' : '#ffffff'}" stroke="${first ? '#0078cf' : '#05a4a0'}" stroke-width="1.5"/>`,
+        `<text x="${x + 12}" y="${y + 21}" font-size="13" font-weight="600" fill="#1d2d3e">${esc(cut(n.name, 32))}</text>`,
+        `<text x="${x + 12}" y="${y + 38}" font-size="11" fill="#556b82">${esc(cut(n.detail[0] ?? '', 38))}</text>`,
+      )
+    })
+  })
+  const lines = d.edges
+    .map(e => {
+      const a = pos.get(e.from), b = pos.get(e.to)
+      if (!a || !b) return ''
+      const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2, mx = (x1 + x2) / 2
+      return `<path d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2 - 6} ${y2}" fill="none" stroke="#758ca4" stroke-width="1.2" marker-end="url(#arrow)"/>`
+    })
+    .join('')
+  const source =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="Inter, Segoe UI, Arial, sans-serif">` +
+    `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#758ca4"/></marker></defs>` +
+    `<rect width="${width}" height="${height}" rx="10" fill="#f5f6f7"/>${lines}${parts.join('')}</svg>`
+  return { source, width, height }
 }
 
 // --- Target and sign-in -----------------------------------------------------
@@ -353,6 +434,14 @@ export const register: Register = on => {
         if (url) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
       } else if (!failed && !tool.startsWith('tenantree_')) await update($, signin, () => null)
       const id = e.tool_use_id
+      // THE DIAGRAM TILE (16.10.2026): the landscape drawn by the plugin after the reply.
+      if (tool === 'tenantree_diagram_read' && id && !failed) {
+        const d = diagramOf(text)
+        if (d.layers.length) {
+          await update($, diagrams, all => ({ ...all, [id]: d }))
+          await update($, turn, ids => [...ids, id])
+        }
+      }
       // THE COST TILE (16.10.2026): the assessment as a tile after the reply.
       if (tool === 'tenantree_cost_query' && id && !failed) {
         await update($, costs, all => ({ ...all, [id]: costOf(text) }))
@@ -415,13 +504,18 @@ export const register: Register = on => {
     if (!hit) return next(e)
     const all = await read($, tiles)
     const allCosts = await read($, costs)
+    const allDiagrams = await read($, diagrams)
+    const shownDiagrams = hit.ids.map(id => [id, allDiagrams[id]] as const).filter((x): x is readonly [string, DiagramTile] => Boolean(x[1]))
     const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
     const shownCosts = hit.ids.map(id => [id, allCosts[id]] as const).filter((x): x is readonly [string, CostTile] => Boolean(x[1]))
-    if (!shown.length && !shownCosts.length) return next(e)
+    if (!shown.length && !shownCosts.length && !shownDiagrams.length) return next(e)
     const reply = await next(e)
     const opened = await read($, expanded)
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button, Link, Markdown } = els
+    const Svg = 'Svg' in els ? els.Svg : null
     const now = await $.clock.now()
+    const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
     const rows = (rs: Row[], width = 22) =>
       rs.map(f => (
         <Box key={f.label}>
@@ -432,31 +526,59 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={1}>
         {reply}
+        {shownDiagrams.map(([id, d]) => {
+          const svg = diagramSvg(d)
+          return (
+            <Box key={id} flexDirection="column" borderStyle="round" paddingX={1} paddingY={1} gap={1}>
+              <Box justifyContent="space-between">
+                <Markdown text={`### ${d.title}`} />
+                {d.url ? <Link href={d.url} label="Open in the Tenantree Dashboard" /> : null}
+              </Box>
+              {Svg ? (
+                <Svg source={svg.source} alt={`${d.title}: ${d.layers.map(l => `${l.name}: ${l.nodes.map(n => n.name).join(', ')}`).join('; ')}`} width={Math.min(svg.width, 1100)} />
+              ) : (
+                <Markdown text={d.layers.map(l => `**${l.name}**\n${l.nodes.map(n => `- ${n.name}${n.detail[0] ? ` — ${n.detail[0]}` : ''}`).join('\n')}`).join('\n\n')} />
+              )}
+              {d.findings.length ? <Markdown text={`**Findings**\n${d.findings.map(f => `- ${f}`).join('\n')}`} /> : <Text color="success">No findings.</Text>}
+              {d.notes.length ? <Markdown dimColor text={d.notes.map(n => `- ${n}`).join('\n')} /> : null}
+            </Box>
+          )
+        })}
         {shownCosts.map(([id, c]) => (
-          <Box key={id} flexDirection="column" borderStyle="round" paddingX={1}>
+          <Box key={id} flexDirection="column" borderStyle="round" paddingX={1} paddingY={1} gap={1}>
             <Box justifyContent="space-between">
-              <Text bold>Costs</Text>
+              <Markdown text="### Costs" />
               {c.url ? <Link href={c.url} label="Open in the Tenantree Dashboard" /> : null}
             </Box>
             {c.risks.length ? (
-              <Box flexDirection="column" marginTop={1}>
-                <Text color="warning" bold>Cost risks</Text>
-                {c.risks.map(r => <Text key={r} color="warning">◆ {r}</Text>)}
-              </Box>
+              c.risks.map(r => {
+                const [head, ...rest] = r.split(': ')
+                const days = /(\d+) days remaining/.exec(r)?.[1]
+                const ends = /ends on approximately (\d{4}-\d{2}-\d{2})/.exec(r)?.[1]
+                return (
+                  <Box key={r} flexDirection="column" borderStyle="round" borderColor="warning" paddingX={1}>
+                    <Box justifyContent="space-between">
+                      <Text color="warning" bold>◆ Cost risk · {rest.length ? head : 'Account'}</Text>
+                      {days ? <Text color="warning" bold>{days} days left{ends ? ` · until ${ends}` : ''}</Text> : null}
+                    </Box>
+                    <Text>{rest.length ? rest.join(': ') : r}</Text>
+                  </Box>
+                )
+              })
             ) : (
-              <Text color="success">No cost risk found.</Text>
+              <Text color="success">◆ No cost risk found.</Text>
             )}
             {c.sections.map(sec => (
-              <Box key={sec.name} flexDirection="column" marginTop={1}>
-                <Text dimColor bold>{sec.name}</Text>
-                {rows(sec.rows, 40)}
-                {sec.lines.map(l => <Text key={l} dimColor>{l}</Text>)}
+              <Box key={sec.name} flexDirection="column">
+                <Markdown text={`#### ${sec.name}`} />
+                {sec.rows.length ? <Markdown text={`| Item | Value |\n|:--|:--|\n${sec.rows.map(r => `| ${cell(r.label)} | ${cell(r.value)} |`).join('\n')}`} /> : null}
+                {sec.lines.map(l => <Markdown key={l} dimColor text={l} />)}
               </Box>
             ))}
             {c.unchecked.length ? (
-              <Box flexDirection="column" marginTop={1}>
-                <Text dimColor bold>Not checked</Text>
-                {c.unchecked.map(u => <Text key={u} dimColor>{u}</Text>)}
+              <Box flexDirection="column">
+                <Markdown text="#### Not checked" />
+                <Markdown dimColor text={c.unchecked.map(u => `- ${u}`).join('\n')} />
               </Box>
             ) : null}
           </Box>

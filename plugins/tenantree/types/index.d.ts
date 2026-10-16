@@ -60,6 +60,17 @@ export type CostSection = { name: string; rows: Row[]; lines: string[] }
 /** The cost tile: read from the text of tenantree_cost_query (the plugin calls nothing for it). */
 export type CostTile = { sections: CostSection[]; risks: string[]; unchecked: string[]; url: string | null }
 
+/** The landscape diagram tile: read from the text of tenantree_diagram_read, drawn as SVG by the plugin. */
+export type DiagramNode = { name: string; detail: string[] }
+export type DiagramTile = {
+  title: string
+  layers: Array<{ name: string; nodes: DiagramNode[] }>
+  edges: Array<{ from: string; to: string; label: string | null }>
+  findings: string[]
+  notes: string[]
+  url: string | null
+}
+
 /** The tiles a reply shows after its text: the end of that text and the tiles' tool use ids. */
 export type Attached = { tail: string; ids: string[] }
 
@@ -75,6 +86,7 @@ declare module 'claude-code' {
       signin: { url: string; system: string | null; at: number } | null
       expanded: Record<string, boolean>
       costs: Record<string, CostTile>
+      diagrams: Record<string, DiagramTile>
     }
   }
 }
