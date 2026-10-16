@@ -92,9 +92,19 @@ async function refresh($: EngineInterface) {
 
 /** Reads what the card shows for a plan (the server keeps the plan; the approval code never comes here). */
 async function loadCard($: EngineInterface, toolUseId: string, planId: string) {
-  const name = await serverOf($)
-  if (!name) return
-  const r = await $.mcp.call(name, 'tenantree_plan_status', { planId, details: true })
+  const fail = async (error: string) => {
+    const at = await $.clock.now()
+    await update($, plans, all => ({ ...all, [toolUseId]: { ...all[toolUseId], planId, status: 'unknown' as const, error, checkedAt: at } }))
+  }
+  const name = await serverOf($).catch(() => null)
+  if (!name) return fail('tenantree is not connected in this session.')
+  let r: Awaited<ReturnType<EngineInterface['mcp']['call']>>
+  try {
+    r = await $.mcp.call(name, 'tenantree_plan_read', { planId })
+  } catch (err) {
+    return fail(String((err as Error)?.message ?? err))
+  }
+  if (r.isError) return fail(textOf(r).split('\n')[0] || 'The plan could not be read.')
   const status = String(fieldOf(r, 'status') ?? 'unknown')
   const get = <T,>(k: string) => fieldOf(r, k) as T | undefined
   const now = await $.clock.now()
@@ -137,7 +147,8 @@ export const register: Register = on => {
       // The band and the card must never disturb the tool call itself.
       await remember($, result).catch(() => {})
       if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
-      const planId = PLAN_LINK.exec(textOf(result))?.[1]
+      // A plan answer of a writing tool; not the plan read itself, which names the same page.
+      const planId = m[1] === 'tenantree_plan_read' ? undefined : PLAN_LINK.exec(textOf(result))?.[1]
       const id = e.tool_use_id
       if (planId && id) {
         const at = await $.clock.now()
@@ -205,6 +216,7 @@ export const register: Register = on => {
         </Box>
         {where ? <Text dimColor>Target: {where}</Text> : null}
         {card.status === 'loading' ? <Text dimColor>Loading the plan …</Text> : null}
+        {card.status === 'unknown' ? <Text color="error">The plan could not be read{card.error ? `: ${card.error}` : '.'}</Text> : null}
         {p?.headline ? <Text>{p.headline}</Text> : null}
         {p?.facts.length ? <Box flexDirection="column" marginTop={1}>{rows(p.facts)}</Box> : null}
         {p?.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}

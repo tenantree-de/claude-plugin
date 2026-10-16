@@ -50,6 +50,7 @@ export type PlanCardState = {
   ok?: boolean
   at?: number
   first?: string
+  error?: string
   checkedAt: number
 }
 
