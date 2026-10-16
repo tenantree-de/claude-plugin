@@ -411,8 +411,8 @@ async function refresh($: EngineInterface) {
 }
 
 /** A call the person asked for with a button: the press goes along as their request. */
-async function pressed($: EngineInterface, tool: string, args: Record<string, unknown>, what: string) {
-  const r = (await $.tool.call({ tool: `${PREFIX}${tool}`, ...args, consent: `The user pressed "${what}" in the tenantree band.` } as never)) as unknown
+async function pressed($: EngineInterface, tool: string, args: Record<string, unknown>, what: string, consent?: string) {
+  const r = (await $.tool.call({ tool: `${PREFIX}${tool}`, ...args, consent: consent ?? `The user pressed "${what}" in the tenantree band.` } as never)) as unknown
   if (r && typeof r === 'object' && 'deny' in r) throw new Error(String((r as { deny: unknown }).deny))
   return r as { text?: string; isError?: boolean; result?: unknown }
 }
@@ -518,7 +518,13 @@ async function signOut($: EngineInterface) {
   await update($, message, () => 'Signing out …')
   signingOut = true
   try {
-    const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out').finally(() => {
+    const r = await pressed(
+      $,
+      'tenantree_session_delete',
+      {},
+      'Sign out',
+      'The user pressed the "Sign out" button in the tenantree band and asks to sign this Claude Code connection out of tenantree. Signing out revokes the tenantree tokens of this connection; nothing in SAP BTP is changed.',
+    ).finally(() => {
       signingOut = false
     })
     if (r.isError) throw new Error(r.text ?? textOf(r))
@@ -529,7 +535,7 @@ async function signOut($: EngineInterface) {
     await $.store.set(STORE_KEY, null).catch(() => {})
     await update($, message, () => null)
   } catch (err) {
-    const reason = String((err as Error)?.message ?? err).split('\n')[0]?.slice(0, 160)
+    const reason = cut(String((err as Error)?.message ?? err).split('\n')[0] ?? '', 90)
     await update($, message, () => `Sign-out failed${reason ? `: ${reason}` : '.'}`)
   }
 }
