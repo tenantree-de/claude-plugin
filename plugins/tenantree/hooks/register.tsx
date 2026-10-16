@@ -24,11 +24,13 @@ const message = atom({ plugin: 'tenantree', key: 'message' } as const, null as s
 const tiles = atom({ plugin: 'tenantree', key: 'tiles' } as const, {} as Record<string, PlanTile>)
 const turn = atom({ plugin: 'tenantree', key: 'turn' } as const, [] as string[])
 const attached = atom({ plugin: 'tenantree', key: 'attached' } as const, [] as Attached[])
+const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
 
 const PREFIX = 'mcp__plugin_tenantree_tenantree__'
 const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
 const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
+const HANDOVER_LINK = /https:\/\/[^\s"<>\\]+\/secret\/[A-Za-z0-9_-]+/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
 const PLAN_MS = 15 * 60 * 1000
@@ -189,6 +191,44 @@ async function check($: EngineInterface, id: string) {
   }
 }
 
+/** The approval code of a call, where Claude Code hands _meta "claude/plugins" to plugins (way B, 16.10.2026). */
+function codeOf(meta: unknown): string | undefined {
+  const plugins = (meta as Record<string, unknown> | undefined)?.['claude/plugins'] as Record<string, unknown> | undefined
+  const plan = (plugins?.tenantree as { plan?: { code?: unknown } } | undefined)?.plan
+  return typeof plan?.code === 'string' ? plan.code : undefined
+}
+
+/** Approve or reject on the person's press, with the code only the tile holds. */
+async function decide($: EngineInterface, id: string, decision: 'approve' | 'reject') {
+  const tile = (await read($, tiles))[id]
+  if (!tile?.code) return
+  await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: decision } }))
+  try {
+    const r = await pressed($, 'tenantree_plan_decide', { planId: tile.planId, code: tile.code, decision }, decision === 'approve' ? 'Approve' : 'Reject')
+    const body = r.text ?? textOf(r)
+    const at = await $.clock.now()
+    const closed = Boolean(r.isError) && /no longer open/.test(body)
+    await update($, tiles, all => ({
+      ...all,
+      [id]: {
+        ...tile,
+        busy: undefined,
+        code: undefined,
+        // "Not carried out: ..." is the decide tool's own refusal; any other error is the result of the approved operation.
+        status: (closed ? 'closed' : r.isError && /^Not carried out:/.test(body) ? 'unknown' : 'decided') as PlanTile['status'],
+        decision,
+        ok: !r.isError,
+        at,
+        first: body.split('\n')[0],
+        handover: HANDOVER_LINK.exec(body)?.[0] ?? null,
+        error: r.isError ? body.split('\n')[0] : undefined,
+      },
+    }))
+  } catch (err) {
+    await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: undefined, status: 'unknown' as const, error: String((err as Error)?.message ?? err) } }))
+  }
+}
+
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
 const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
 const normal = (s: string) => s.replace(/\s+/g, ' ').trim()
@@ -241,6 +281,20 @@ export const register: Register = on => {
   // The tiles of a turn go under the text of its reply.
   on('turn.complete', async ($, e, next) => {
     const ids = await read($, turn).catch(() => [] as string[])
+    if (ids.length) {
+      // The codes, where Claude Code hands them to plugins; the model never reads this part.
+      try {
+        const messages = await $.session.messages()
+        const codes = new Map<string, string>()
+        for (const m of messages) for (const u of m.toolUses ?? []) {
+          const code = codeOf((u as { meta?: unknown }).meta)
+          if (code && ids.includes(u.tool_use_id)) codes.set(u.tool_use_id, code)
+        }
+        if (codes.size) await update($, tiles, all => Object.fromEntries(Object.entries(all).map(([k, v]) => [k, codes.has(k) ? { ...v, code: codes.get(k) } : v])))
+      } catch {
+        // No codes: the tile offers the approval page.
+      }
+    }
     if (ids.length && e.answer) {
       const tail = normal(e.answer).slice(-160)
       await update($, attached, list => [...list.slice(-50), { tail, ids }]).catch(() => {})
@@ -270,6 +324,7 @@ export const register: Register = on => {
     const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
     if (!shown.length) return next(e)
     const reply = await next(e)
+    const opened = await read($, expanded)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const now = await $.clock.now()
     const rows = (rs: Row[]) =>
@@ -284,6 +339,8 @@ export const register: Register = on => {
         {reply}
         {shown.map(([id, p]) => {
           const expired = p.status === 'open' && now > p.expiresAt
+          const open = p.status === 'open' && !expired
+          const isOpen = Boolean(opened[id])
           const decided =
             p.status === 'decided'
               ? `${p.decision === 'approve' ? (p.ok === false ? 'Approved, but not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.`
@@ -295,18 +352,35 @@ export const register: Register = on => {
                 {p.level ? <Text dimColor>Write level: {LEVEL[p.level] ?? p.level}</Text> : null}
               </Box>
               {p.target ? <Text dimColor>Target: {p.target}</Text> : null}
-              {p.facts.length ? <Box flexDirection="column" marginTop={1}>{rows(p.facts)}</Box> : null}
-              {p.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}
-              {p.warnings.map(w => <Text key={w} color="warning">{w}</Text>)}
+              {open && p.code ? (
+                <Box marginTop={1} gap={2} alignItems="center">
+                  <Button key={`approve-${id}`} label={p.busy === 'approve' ? 'Carrying out …' : 'Approve'} variant="primary" onPress={() => void (p.busy ? null : decide($, id, 'approve'))} />
+                  <Button key={`reject-${id}`} label={p.busy === 'reject' ? 'Rejecting …' : 'Reject'} onPress={() => void (p.busy ? null : decide($, id, 'reject'))} />
+                  <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text>
+                </Box>
+              ) : open ? (
+                <Box marginTop={1} flexDirection="column">
+                  <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text>
+                  <Text dimColor>Approve and reject in this tile need the plugin channel of Claude Code, which is not enabled yet; please decide on the approval page.</Text>
+                </Box>
+              ) : null}
+              {expired ? <Text dimColor>Expired at {time(p.expiresAt)} unless decided before.</Text> : null}
+              {decided ? <Text color={p.decision === 'approve' && p.ok !== false ? 'success' : p.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
+              {p.handover ? <Link href={p.handover} label="Open the secure one-time link" /> : null}
+              {p.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
+              {p.status === 'checking' ? <Text dimColor>Reading the status …</Text> : null}
+              {p.status === 'unknown' ? <Text color="error">The status could not be read{p.error ? `: ${p.error}` : '.'}</Text> : null}
+              {isOpen ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {p.facts.length ? <Box flexDirection="column">{rows(p.facts)}</Box> : null}
+                  {p.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}
+                  {p.warnings.map(w => <Text key={w} color="warning">{w}</Text>)}
+                </Box>
+              ) : null}
               <Box marginTop={1} gap={2} alignItems="center">
-                {p.status === 'open' && !expired && p.url ? <Link href={p.url} label="Approve or reject" /> : null}
-                {p.status === 'open' && !expired ? <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text> : null}
-                {expired ? <Text dimColor>Expired at {time(p.expiresAt)} unless decided before.</Text> : null}
-                {decided ? <Text color={p.decision === 'approve' && p.ok !== false ? 'success' : p.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
-                {p.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
-                {p.status === 'checking' ? <Text dimColor>Reading the status …</Text> : null}
-                {p.status === 'unknown' ? <Text color="error">The status could not be read{p.error ? `: ${p.error}` : '.'}</Text> : null}
-                {p.status !== 'checking' ? <Button key={`update-${id}`} label="Update status" onPress={() => void check($, id)} /> : null}
+                <Button key={`plan-${id}`} label={isOpen ? 'Hide plan' : 'Show plan'} onPress={() => void update($, expanded, all => ({ ...all, [id]: !isOpen }))} />
+                {p.url ? <Link href={p.url} label="Open the approval page" /> : null}
+                {p.status !== 'checking' && !p.busy ? <Button key={`update-${id}`} label="Update status" onPress={() => void check($, id)} /> : null}
               </Box>
               {decided && p.first ? <Text dimColor>{p.first}</Text> : null}
             </Box>

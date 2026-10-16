@@ -48,6 +48,10 @@ export type PlanTile = {
   at?: number
   first?: string
   error?: string
+  /** The approval code from _meta "claude/plugins", where Claude Code hands it over; never shown. */
+  code?: string
+  handover?: string | null
+  busy?: 'approve' | 'reject'
 }
 
 /** The tiles a reply shows after its text: the end of that text and the tiles' tool use ids. */
@@ -63,6 +67,7 @@ declare module 'claude-code' {
       turn: string[]
       attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
+      expanded: Record<string, boolean>
     }
   }
 }
