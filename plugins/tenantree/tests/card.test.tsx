@@ -202,3 +202,21 @@ test('the tenant diagram groups the second layer into blocks with one connection
   expect(tile).toContain('prefers-color-scheme: dark')
   expect(tile.split('class=\\"edge\\"').length - 1).toBe(3)
 })
+
+test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEPLU-6)', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  const PROFILE = JSON.stringify({ message: 'Profile', timeZone: 'Europe/Berlin', activeTarget: null })
+  on('tool.call', async (_$, e) =>
+    (String((e as { tool?: string }).tool).endsWith('tenantree_profile_read')
+      ? { ref: 1, result: [{ type: 'text', text: PROFILE }], text: PROFILE }
+      : { ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_profile_read', tool_use_id: 'toolu_p' } as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_3', id: 'Tenantree_Demo_iFlow_X' } as never)
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
+  // 1 000 000 ms + 15 minutes = 00:31 UTC on 01.01.1970, 01:31 in Berlin (winter time).
+  expect(JSON.stringify(await band.drawn())).toContain('00:31 UTC (01:31 Europe/Berlin)')
+})

@@ -333,6 +333,8 @@ function diagramAlt(d: DiagramTile): string {
 // --- Target and sign-in -----------------------------------------------------
 
 async function remember($: EngineInterface, result: unknown) {
+  const zone = fieldOf(result, 'timeZone')
+  if (typeof zone === 'string' && zone) personZone = zone
   const found = fieldOf(result, 'activeTarget') as ActiveTarget | null | undefined
   if (found === undefined) {
     // An SAP tool's answer names the target in its last line: enough for the band, without a call.
@@ -486,7 +488,22 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
 }
 
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
-const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+/**
+ * TEN-375 / TEPLU-6: SAP BTP time (UTC) and the person's time zone from the profile (the server
+ * names it in its answers), one time when both are equal. Without a known zone, UTC alone.
+ */
+let personZone: string | null = null
+const time = (ms?: number) => {
+  if (!ms) return ''
+  const hm = (tz: string) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz })
+  const utc = hm('UTC')
+  try {
+    const local = personZone ? hm(personZone) : utc
+    return local === utc ? `${utc} UTC` : `${utc} UTC (${local} ${personZone})`
+  } catch {
+    return `${utc} UTC`
+  }
+}
 const normal = (s: string) => s.replace(/\s+/g, ' ').trim()
 
 export const register: Register = on => {
