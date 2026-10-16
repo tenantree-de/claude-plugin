@@ -393,7 +393,10 @@ async function serverOf($: EngineInterface): Promise<string | null> {
   const connected = await $.mcp.connect('tenantree')
   if (!connected.isConnected) {
     // The server asks for a sign-in: the band offers it (TEPLU-12).
-    if (connected.reason === 'auth') await update($, account, (): AccountState => ({ status: 'signedOut' }))
+    if (connected.reason === 'auth') {
+      await update($, account, (): AccountState => ({ status: 'signedOut' }))
+      watchSignIn($)
+    }
     return null
   }
   await update($, server, () => connected.server)
@@ -518,38 +521,47 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
  */
 const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new )?(?:sign-in|authentication)/i
 
-/** Set while the Sign out button runs: the guard lets this call through, never the model's own. */
-let signingOut = false
+/**
+ * SIGN OUT AS THE PERSON'S OWN REQUEST (operator, 17.10.2026). The button and "/tenantree signout" put
+ * "Sign me out of tenantree." into the prompt box; the person sends it with Enter, and Claude signs the
+ * connection out because the person asked for it. The guard lets the model's call through only after the
+ * person themselves sent such a request.
+ */
+let signOutRequestedAt = 0
+const SIGNOUT_WINDOW_MS = 3 * 60 * 1000
+const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
+const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b/i
+
+async function signOut($: EngineInterface) {
+  const filled = await $.prompt.fill({ text: SIGNOUT_PROMPT }).catch(() => null)
+  await update($, message, () => (filled?.isFilled ? 'Press Enter to sign out of tenantree.' : `To sign out, send: ${SIGNOUT_PROMPT}`))
+}
 
 /**
- * Sign out (operator, 17.10.2026): the band asks the server to end this connection, through Claude Code's
- * own permission path like every other button. Where Claude Code's auto permission mode blocks it, the band
- * says so; in the other permission modes Claude Code asks once and the sign-out goes through.
+ * THE BAND FOLLOWS THE SIGN-IN BY ITSELF (operator, 17.10.2026): while signed out, the plugin asks Claude Code
+ * every 5 seconds whether the tenantree connection is back (no tool call); once it is, it reads the profile.
  */
-async function signOut($: EngineInterface) {
-  await update($, message, () => 'Signing out …')
-  signingOut = true
-  try {
-    const r = await pressed(
-      $,
-      'tenantree_session_delete',
-      {},
-      'Sign out',
-      'The user pressed the "Sign out" button in the tenantree band and asks to sign this connection out of tenantree. Signing out revokes the tenantree tokens of this connection; nothing in SAP BTP is changed.',
-    ).finally(() => {
-      signingOut = false
-    })
-    if (r.isError) throw new Error(r.text ?? textOf(r))
-    await signedOut($)
-    await update($, message, () => null)
-  } catch {
-    // Claude Code's auto permission mode gives no verdict for this call (measured 17.10.2026); in the other
-    // modes Claude Code asks once and the sign-out goes through.
-    await update($, message, () => 'The Auto permission mode blocks the sign-out. Please switch the permission mode and press Sign out again.')
-  }
+let watching: { cancel: () => void } | null = null
+function watchSignIn($: EngineInterface) {
+  if (watching) return
+  watching = $.clock.every(5000, () =>
+    void (async () => {
+      if ((await read($, account)).status !== 'signedOut') {
+        watching?.cancel()
+        watching = null
+        return
+      }
+      const c = await $.mcp.connect('tenantree').catch(() => null)
+      if (!c?.isConnected) return
+      await update($, server, () => c.server)
+      await refresh($).catch(() => {})
+      if ((await read($, account)).status === 'signedIn') await update($, message, () => null)
+    })().catch(() => {}),
+  )
 }
 
 async function signedOut($: EngineInterface) {
+  watchSignIn($)
   await update($, account, (): AccountState => ({ status: 'signedOut' }))
   await update($, target, (): TargetState => ({ status: 'unknown' }))
   await update($, server, () => null)
@@ -602,7 +614,7 @@ export const register: Register = on => {
     const last = (await $.store.get(STORE_KEY).catch(() => null)) as TargetState | null
     if (last && last.status === 'known') await update($, target, prev => (prev.status === 'unknown' ? last : prev)).catch(() => {})
     if (Object.values(await read($, tiles).catch(() => ({}))).some(p => p.status === 'open')) await follow($)
-    await $.command.register({ name: 'tenantree', description: 'Show the tenantree account and the organizations, landscapes and subaccounts available to it' })
+    await $.command.register({ name: 'tenantree', description: 'tenantree account: show it, sign in or sign out', argumentHint: '[signin | signout]' })
     void refresh($).catch(() => {})
     return result
   })
@@ -611,6 +623,9 @@ export const register: Register = on => {
   // signed in and as whom; the band offers Sign out or Sign in accordingly. At most every 30 seconds.
   on('prompt.submit', async ($, e, next) => {
     await update($, turn, () => []).catch(() => {})
+    // Only a message the person sent themselves counts as a sign-out request.
+    const origin = (e as { origin?: { kind?: string } }).origin?.kind
+    if (origin !== 'plugin' && ASKS_SIGNOUT.test(String((e as { text?: unknown }).text ?? ''))) signOutRequestedAt = await $.clock.now()
     const at = await $.clock.now()
     if (at - lastStatus > STATUS_MS) {
       lastStatus = at
@@ -621,9 +636,16 @@ export const register: Register = on => {
 
   // Only the Sign out button signs the connection out (TEN-537): never the model on its own.
   // Signing out is the person's own step in the portal (TEN-537): never the model's.
-  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) =>
-    signingOut ? next(e) : { deny: 'Signing out is done by the person with the Sign out button of the tenantree band.' },
-  )
+  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) => {
+    const at = await $.clock.now()
+    if (at - signOutRequestedAt > SIGNOUT_WINDOW_MS) return { deny: 'Sign out only when the person has asked for it in their own message.' }
+    signOutRequestedAt = 0
+    const result = await next(e)
+    const failed = Boolean((result as { isError?: boolean } | null)?.isError) || 'deny' in (result as object)
+    if (!failed) await signedOut($)
+    await update($, message, () => (failed ? 'The sign-out was not carried out.' : null))
+    return result
+  })
 
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
@@ -639,6 +661,7 @@ export const register: Register = on => {
         await signedOut($)
         return result
       }
+      if (!failed && (await read($, account)).status === 'signedOut') void refresh($).catch(() => {})
       const at = await $.clock.now()
       if (tool === 'tenantree_landscape_signin') {
         const url = SIGNIN_LINK.exec(text)?.[0]
@@ -697,7 +720,16 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'tenantree' }, async $ => {
+  on('command.run', { command: 'tenantree' }, async ($, e) => {
+    const verb = String((e as { args?: unknown }).args ?? '').trim().toLowerCase().replace(/[^a-z]/g, '')
+    if (verb === 'signout' || verb === 'logout') {
+      await signOut($)
+      return { text: (await read($, message)) ?? '' }
+    }
+    if (verb === 'signin' || verb === 'login') {
+      await signIn($)
+      return { text: (await read($, message)) ?? 'Signed in to tenantree.' }
+    }
     await refresh($).catch(() => {})
     const state = await read($, target)
     const acc = await read($, account)

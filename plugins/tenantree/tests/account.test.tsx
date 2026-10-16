@@ -28,15 +28,16 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
 
   // The model cannot sign the person out.
   const denied = (await $.tool.call({ tool: `${P}tenantree_session_delete`, tool_use_id: 'toolu_m' } as never)) as { deny?: string }
-  expect(String(denied.deny)).toContain('Sign out')
+  expect(String(denied.deny)).toContain('asked for it')
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
 
-  // Claude Code's auto permission mode refuses the button's call: the band says so and stays signed in.
+  // Sign out puts the request into the prompt box; nothing is sent by itself and the band stays signed in.
   await band.press({ key: 'signout' } as never)
-  const refused = JSON.stringify(await band.drawn())
-  expect(refused).toContain('The Auto permission mode blocks the sign-out')
-  expect(refused).toContain('person@example.test')
+  const asked = JSON.stringify(await band.drawn())
+  expect(asked).toMatch(/Press Enter to sign out of tenantree|To sign out, send: Sign me out of tenantree/)
+  expect(asked).toContain('person@example.test')
+  expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
   // Signed out in the portal: the next tenantree answer asks for a sign-in.
   await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
