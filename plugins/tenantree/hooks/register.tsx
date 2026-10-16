@@ -371,7 +371,11 @@ async function remember($: EngineInterface, result: unknown) {
   }
   const signedInAs = fieldOf(result, 'signedInAs') as string | undefined
   const organizations = fieldOf(result, 'organizations') as Array<{ name: string; role: 'admin' | 'user' }> | undefined
-  if (signedInAs) await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, organizations: organizations ?? [] }))
+  if (signedInAs) {
+    await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, organizations: organizations ?? [] }))
+    // Signed in (again): a sign-in hint in the band is out of date (operator, 17.10.2026).
+    await update($, message, m => (m && SIGNIN_NOTES.some(n => m.startsWith(n)) ? null : m))
+  }
   const targets = fieldOf(result, 'targets') as Target[] | undefined
   const at = await $.clock.now()
   await update($, target, (prev): TargetState => {
@@ -584,6 +588,7 @@ async function signIn($: EngineInterface) {
   const filled = await $.prompt.fill({ text: '/mcp' }).catch(() => null)
   await update($, message, () => (filled?.isFilled ? SIGNIN_READY : SIGNIN_HELP))
 }
+const SIGNIN_NOTES = ['/mcp is in the prompt box', 'To sign in,', 'Connecting to tenantree']
 const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select tenantree and choose Authenticate.'
 let lastStatus = 0
 const STATUS_MS = 30_000
