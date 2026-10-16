@@ -366,6 +366,8 @@ async function remember($: EngineInterface, result: unknown) {
       if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true } } : before
       return { status: 'known', target: { organization, landscape, system, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: withActive(before?.targets, { organization, landscape, system }), at }
     })
+    await update($, message, m => (m && !m.endsWith('…') ? null : m))
+    await update($, signin, () => null)
     await keep($)
     return
   }
@@ -376,6 +378,11 @@ async function remember($: EngineInterface, result: unknown) {
     // Signed in (again): a sign-in hint in the band is out of date (operator, 17.10.2026).
     await update($, message, m => (m && SIGNIN_NOTES.some(n => m.startsWith(n)) ? null : m))
   }
+  // NOTICES LEAVE WHEN THINGS WORKED (operator, 17.10.2026): an answer that went through clears the band's error
+  // or hint line (progress lines ending in '…' stay until their action ends); signed in at the IAS of the active
+  // target clears the pending IAS sign-in.
+  await update($, message, m => (m && !m.endsWith('…') ? null : m))
+  if (found?.signedIn) await update($, signin, () => null)
   const targets = fieldOf(result, 'targets') as Target[] | undefined
   const at = await $.clock.now()
   await update($, target, (prev): TargetState => {
