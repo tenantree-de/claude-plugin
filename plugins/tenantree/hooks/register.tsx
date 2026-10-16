@@ -332,6 +332,20 @@ function diagramAlt(d: DiagramTile): string {
 
 // --- Target and sign-in -----------------------------------------------------
 
+/**
+ * The picker labels come from the list of targets, which only the landscape query sends. When an
+ * answer names the active target with other names (a landscape was renamed in the portal), the
+ * active entry of the list follows, so that the band does not keep showing the old name.
+ */
+function withActive(targets: Target[] | undefined, t: Pick<ActiveTarget, 'organization' | 'landscape' | 'system'>): Target[] | undefined {
+  if (!targets?.length) return targets
+  const i = targets.findIndex(x => x.active)
+  if (i < 0) return targets
+  const a = targets[i]!
+  if (a.organization === t.organization && a.landscape === t.landscape && a.system === t.system) return targets
+  return targets.map((x, k) => (k === i ? { ...x, organization: t.organization, landscape: t.landscape, system: t.system } : x))
+}
+
 async function remember($: EngineInterface, result: unknown) {
   const zone = fieldOf(result, 'timeZone')
   if (typeof zone === 'string' && zone) personZone = zone
@@ -347,7 +361,7 @@ async function remember($: EngineInterface, result: unknown) {
       const same = before?.target && before.target.organization === organization && before.target.landscape === landscape && before.target.system === system
       // The line comes only with an answer that went through: the person is admitted there.
       if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true } } : before
-      return { status: 'known', target: { organization, landscape, system, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: before?.targets, at }
+      return { status: 'known', target: { organization, landscape, system, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: withActive(before?.targets, { organization, landscape, system }), at }
     })
     await keep($)
     return
@@ -357,7 +371,7 @@ async function remember($: EngineInterface, result: unknown) {
   const at = await $.clock.now()
   await update($, target, (prev): TargetState => {
     const before = prev.status === 'known' ? prev : undefined
-    return { status: 'known', target: found, account: account ?? before?.account, targets: targets ?? before?.targets, at }
+    return { status: 'known', target: found, account: account ?? before?.account, targets: targets ?? (found ? withActive(before?.targets, found) : before?.targets), at }
   })
   await keep($)
 }

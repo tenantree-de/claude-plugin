@@ -220,3 +220,23 @@ test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEP
   // 1 000 000 ms + 15 minutes = 00:31 UTC on 01.01.1970, 01:31 in Berlin (winter time).
   expect(JSON.stringify(await band.drawn())).toContain('00:31 UTC (01:31 Europe/Berlin)')
 })
+
+test('a landscape renamed in the portal reaches the picker with the next answer', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  const target = (landscape: string) => ({ organization: 'Org', landscape, system: 'bics-labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' })
+  const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', organization: 'Org', landscape: 'BICS Labor', system: 'bics-labor', kind: 'development', active: true }], activeTarget: target('BICS Labor') })
+  const ACCESS = JSON.stringify({ message: 'Access', activeTarget: target('BICS BTP') })
+  let answer = LIST
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: answer }], text: answer }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_landscape_query', tool_use_id: 'toolu_l' } as never)
+  answer = ACCESS
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_access_read', tool_use_id: 'toolu_a' } as never)
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
+  const json = JSON.stringify(await band.drawn())
+  expect(json).toContain('BICS BTP')
+  expect(json).not.toContain('BICS Labor')
+})
