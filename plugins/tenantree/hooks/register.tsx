@@ -188,32 +188,59 @@ async function pressed($: EngineInterface, tool: string, args: Record<string, un
   return r as { text?: string; isError?: boolean; result?: unknown }
 }
 
-/** The state of one plan, on the person's press. */
+/**
+ * THE TILE FOLLOWS ITS PLAN BY ITSELF (operator, 16.10.2026): while a plan is open, the tile asks every
+ * few seconds whether it was decided -- on the approval page, in another tile, or not at all. The read
+ * tool is marked read-only, so auto mode lets it through without a request of the person.
+ */
+let ticking: { cancel: () => void } | null = null
+let lastTick = 0
+const POLL_MS = 5000
+
 async function check($: EngineInterface, id: string) {
   const tile = (await read($, tiles))[id]
-  if (!tile) return
-  await update($, tiles, all => ({ ...all, [id]: { ...tile, status: 'checking' as const } }))
-  try {
-    const r = await pressed($, 'tenantree_plan_read', { planId: tile.planId }, 'Update status')
-    const body = r.text ?? textOf(r)
-    const status = String(fieldOf(body, 'status') ?? fieldOf(r, 'status') ?? 'unknown')
-    const get = <T,>(k: string) => (fieldOf(body, k) ?? fieldOf(r, k)) as T | undefined
-    await update($, tiles, all => ({
-      ...all,
-      [id]: {
-        ...tile,
-        status: (['open', 'decided', 'closed'].includes(status) ? status : 'unknown') as PlanTile['status'],
-        decision: get<'approve' | 'reject'>('decision'),
-        by: get<string | null>('by'),
-        ok: get<boolean>('ok'),
-        at: get<number>('at'),
-        first: get<string>('first'),
-        error: r.isError ? body.split('\n')[0] : undefined,
-      },
-    }))
-  } catch (err) {
-    await update($, tiles, all => ({ ...all, [id]: { ...tile, status: 'unknown' as const, error: String((err as Error)?.message ?? err) } }))
+  if (!tile || tile.status !== 'open') return
+  const name = await serverOf($)
+  if (!name) return
+  const r = await $.mcp.call(name, 'tenantree_plan_read', { planId: tile.planId })
+  if (r.isError) return
+  const status = String(fieldOf(r, 'status') ?? '')
+  if (status === 'open' || !status) return
+  const get = <T,>(k: string) => fieldOf(r, k) as T | undefined
+  await update($, tiles, all => ({
+    ...all,
+    [id]: {
+      ...tile,
+      code: undefined,
+      status: (status === 'decided' ? 'decided' : 'closed') as PlanTile['status'],
+      decision: get<'approve' | 'reject'>('decision'),
+      by: get<string | null>('by'),
+      ok: get<boolean>('ok'),
+      at: get<number>('at'),
+      first: get<string>('first'),
+    },
+  }))
+}
+
+async function tick($: EngineInterface) {
+  const now = await $.clock.now()
+  lastTick = now
+  const open = Object.entries(await read($, tiles)).filter(([, p]) => p.status === 'open' && now <= p.expiresAt + POLL_MS)
+  if (!open.length) {
+    ticking?.cancel()
+    ticking = null
+    return
   }
+  for (const [id] of open) await check($, id).catch(() => {})
+}
+
+async function follow($: EngineInterface) {
+  // A refused period ends an interval: a timer that has not ticked for two periods is started anew.
+  const now = await $.clock.now()
+  if (ticking && now - lastTick < 2 * POLL_MS) return
+  ticking?.cancel()
+  lastTick = now
+  ticking = $.clock.every(POLL_MS, () => void tick($).catch(() => {}))
 }
 
 /** The approval code of a call, where Claude Code hands _meta "claude/plugins" to plugins (way B, 16.10.2026). */
@@ -263,6 +290,7 @@ export const register: Register = on => {
     const result = await next(e)
     const last = (await $.store.get(STORE_KEY).catch(() => null)) as TargetState | null
     if (last && last.status === 'known') await update($, target, prev => (prev.status === 'unknown' ? last : prev)).catch(() => {})
+    if (Object.values(await read($, tiles).catch(() => ({}))).some(p => p.status === 'open')) await follow($)
     await $.command.register({ name: 'tenantree', description: 'Show the tenantree account and the organizations, landscapes and subaccounts available to it' })
     void refresh($).catch(() => {})
     return result
@@ -298,6 +326,7 @@ export const register: Register = on => {
         const tile: PlanTile = { ...planOf(text), planId: link[1], url: link[0], expiresAt: at + PLAN_MS, status: 'open' }
         await update($, tiles, all => ({ ...all, [id]: tile }))
         await update($, turn, ids => [...ids, id])
+        await follow($)
       }
     } catch {
       // Nothing of the band is worth a failed tool call.
@@ -407,7 +436,6 @@ export const register: Register = on => {
               <Box marginTop={1} gap={2} alignItems="center">
                 <Button key={`plan-${id}`} label={isOpen ? 'Hide plan' : 'Show plan'} onPress={() => void update($, expanded, all => ({ ...all, [id]: !isOpen }))} />
                 {p.url ? <Link href={p.url} label="Open the approval page" /> : null}
-                {p.status !== 'checking' && !p.busy ? <Button key={`update-${id}`} label="Update status" onPress={() => void check($, id)} /> : null}
               </Box>
               {decided && p.first ? <Text dimColor>{p.first}</Text> : null}
             </Box>

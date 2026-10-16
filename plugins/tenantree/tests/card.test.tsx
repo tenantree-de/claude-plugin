@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const PLAN = '3b7ba663-0c63-4f5a-b804-c5dc3f693b4a'
 const TOOL = 'mcp__plugin_tenantree_tenantree__cpi_runtimeartifact_delete'
@@ -65,4 +65,21 @@ test('with the plugin channel the tile offers Approve and Reject', async ($, on)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('"Approve"')
   expect(tile).toContain('"Reject"')
+})
+
+test('the tile learns by itself that its plan was approved on the page', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Undeployed.' }) }], isError: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_3', id: 'Tenantree_Demo_iFlow_X' } as never)
+  await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't3', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  await clock.advance(6000)
+  const tile = JSON.stringify(await reply.drawn())
+  expect(tile).toContain('Approved and carried out')
+  expect(tile).not.toContain('Update status')
 })
