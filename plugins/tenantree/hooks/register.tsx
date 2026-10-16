@@ -199,44 +199,135 @@ function diagramOf(text: string): DiagramTile {
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(1, n - 1))}…` : s)
 
-/** The diagram as SVG: one column per layer, a box per node, curved connections (tenantree colours). */
-function diagramSvg(d: DiagramTile): { source: string; width: number; height: number } {
-  const W = 250, H = 50, GAP_X = 90, GAP_Y = 12, TOP = 34, PAD = 16
-  const pos = new Map<string, { x: number; y: number }>()
-  const rows = Math.max(1, ...d.layers.map(l => l.nodes.length))
-  const height = TOP + rows * (H + GAP_Y) + PAD
-  const width = PAD * 2 + d.layers.length * W + Math.max(0, d.layers.length - 1) * GAP_X
-  const parts: string[] = []
-  d.layers.forEach((layer, li) => {
-    const x = PAD + li * (W + GAP_X)
-    const top = TOP + ((rows - layer.nodes.length) * (H + GAP_Y)) / 2
-    parts.push(`<text x="${x}" y="20" font-size="12" font-weight="600" fill="#758ca4">${esc(cut(layer.name.toUpperCase(), 34))}</text>`)
-    layer.nodes.forEach((n, ni) => {
-      const y = top + ni * (H + GAP_Y)
-      pos.set(n.name, { x, y })
-      const first = li === 0
-      parts.push(
-        `<rect x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="${first ? '#e1f4ff' : '#ffffff'}" stroke="${first ? '#0078cf' : '#05a4a0'}" stroke-width="1.5"/>`,
-        `<text x="${x + 12}" y="${y + 21}" font-size="13" font-weight="600" fill="#1d2d3e">${esc(cut(n.name, 32))}</text>`,
-        `<text x="${x + 12}" y="${y + 38}" font-size="11" fill="#556b82">${esc(cut(n.detail[0] ?? '', 38))}</text>`,
-      )
-    })
+/** The blocks of the second layer of a tenant diagram, in drawing order. */
+const GROUPS = ['SAP subscriptions', 'tenantree access', 'Other instances'] as const
+type Group = (typeof GROUPS)[number]
+
+/**
+ * Sorts the nodes of a layer into blocks: SAP subscriptions (reached by a connection labelled
+ * 'subscribed'), tenantree's own access (named tenantree-… or tenantree_…) and other instances.
+ * Null when no node is a subscription or a tenantree access: the layer keeps one box per node.
+ */
+function groupsOf(nodes: DiagramTile['layers'][number]['nodes'], edges: DiagramTile['edges']): Map<Group, typeof nodes> | null {
+  const subscribed = new Set(edges.filter(e => /^subscribed$/i.test((e.label ?? '').trim())).map(e => e.to))
+  const groupOf = (name: string): Group => (subscribed.has(name) ? 'SAP subscriptions' : /^tenantree[-_]/i.test(name) ? 'tenantree access' : 'Other instances')
+  if (!nodes.some(n => groupOf(n.name) !== 'Other instances')) return null
+  const out = new Map<Group, typeof nodes>()
+  for (const g of GROUPS) {
+    const members = nodes.filter(n => groupOf(n.name) === g)
+    if (members.length) out.set(g, members)
+  }
+  return out
+}
+
+/**
+ * The diagram as SVG: one column per layer, a box per node (in blocks where the layer groups),
+ * curved connections in the tenantree colours.
+ *
+ * Colour scheme: a render hook learns the surface (desktop, mobile, editor) and its size, not the
+ * person's light or dark theme ($.config's 'theme' row is the terminal's setting, not the app's).
+ * The SVG therefore adapts itself: presentation attributes carry the light palette, and an embedded
+ * <style> overrides them under @media (prefers-color-scheme: dark), which an SVG drawn as an image
+ * evaluates against the app's own appearance. Should a surface ever drop the <style>, the light
+ * palette remains complete and legible on its own background. 'light' and 'dark' force one scheme.
+ */
+function diagramSvg(d: DiagramTile, scheme: 'auto' | 'light' | 'dark' = 'auto'): { source: string; width: number; height: number } {
+  const MAX_WIDTH = 1100, GAP_X = 64, TOP = 34, PAD = 16, INSET = 10, HEAD = 22, GROUP_GAP = 14
+  const NAME_PX = 7.2, DETAIL_PX = 6.4, TEXT_PAD = 24, MIN_W = 200, MAX_W = 320
+  const layers = d.layers.map((layer, li) => ({ layer, groups: li > 0 ? groupsOf(layer.nodes, d.edges) : null }))
+
+  // Column widths from the longest text; past the overall cap the widest columns give way first.
+  const wanted = layers.map(({ layer, groups }) => {
+    const text = Math.max(0, ...layer.nodes.map(n => Math.max(n.name.length * NAME_PX, (n.detail[0] ?? '').length * DETAIL_PX)))
+    return Math.min(MAX_W, Math.max(MIN_W, Math.ceil(text + TEXT_PAD))) + (groups ? 2 * INSET : 0)
   })
+  const room = MAX_WIDTH - 2 * PAD - Math.max(0, layers.length - 1) * GAP_X
+  let ceiling = Math.max(...wanted, 0)
+  while (ceiling > 120 && wanted.reduce((s, w) => s + Math.min(w, ceiling), 0) > room) ceiling -= 4
+  const widths = wanted.map(w => Math.min(w, ceiling))
+
+  // Vertical extent of each column: plain boxes, or blocks of compact boxes.
+  const H = 50, GAP_Y = 12, HG = 44, GAP_G = 8
+  const extent = layers.map(({ layer, groups }) =>
+    groups
+      ? [...groups.values()].reduce((s, ns) => s + HEAD + ns.length * (HG + GAP_G) - GAP_G + 2 * INSET, 0) + (groups.size - 1) * GROUP_GAP
+      : layer.nodes.length * (H + GAP_Y) - GAP_Y,
+  )
+  const inner = Math.max(H, ...extent)
+  const height = TOP + inner + PAD + 4
+  const width = PAD * 2 + widths.reduce((s, w) => s + w, 0) + Math.max(0, layers.length - 1) * GAP_X
+
+  const anchor = new Map<string, { left: number; right: number; mid: number }>()
+  const block = new Map<string, { left: number; mid: number }>()
+  const parts: string[] = []
+  const box = (x: number, y: number, w: number, h: number, n: DiagramTile['layers'][number]['nodes'][number], first: boolean) => {
+    const chars = (px: number) => Math.max(4, Math.floor((w - TEXT_PAD) / px))
+    const nameY = h >= 50 ? 21 : 19, detailY = h >= 50 ? 38 : 34
+    parts.push(
+      `<rect class="${first ? 'box1' : 'box'}" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${first ? '#e1f4ff' : '#ffffff'}" stroke="${first ? '#0078cf' : '#05a4a0'}" stroke-width="1.5"/>`,
+      `<text class="name" x="${x + 12}" y="${y + nameY}" font-size="13" font-weight="600" fill="#1d2d3e">${esc(cut(n.name, chars(NAME_PX)))}</text>`,
+      `<text class="detail" x="${x + 12}" y="${y + detailY}" font-size="11" fill="#556b82">${esc(cut(n.detail[0] ?? '', chars(DETAIL_PX)))}</text>`,
+    )
+    anchor.set(n.name, { left: x, right: x + w, mid: y + h / 2 })
+  }
+
+  let x = PAD
+  layers.forEach(({ layer, groups }, li) => {
+    const w = widths[li] ?? MIN_W
+    let y = TOP + (inner - (extent[li] ?? 0)) / 2
+    parts.push(`<text class="head" x="${x}" y="20" font-size="12" font-weight="600" fill="#758ca4">${esc(cut(layer.name.toUpperCase(), Math.floor(w / 7.6)))}</text>`)
+    if (groups) {
+      for (const [g, ns] of groups) {
+        const h = HEAD + ns.length * (HG + GAP_G) - GAP_G + 2 * INSET
+        parts.push(
+          `<rect class="group" x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#eef1f4" stroke="#c9d2db" stroke-width="1"/>`,
+          `<text class="ghead" x="${x + INSET + 2}" y="${y + INSET + 11}" font-size="11" font-weight="600" fill="#556b82">${esc(g)} (${ns.length})</text>`,
+        )
+        ns.forEach((n, ni) => box(x + INSET, y + INSET + HEAD + ni * (HG + GAP_G), w - 2 * INSET, HG, n, false))
+        for (const n of ns) block.set(n.name, { left: x, mid: y + h / 2 })
+        y += h + GROUP_GAP
+      }
+    } else {
+      layer.nodes.forEach((n, ni) => box(x, y + ni * (H + GAP_Y), w, H, n, li === 0))
+    }
+    x += w + GAP_X
+  })
+
+  // One connection per source and block where the target sits in a block, otherwise one per connection.
+  const drawn = new Set<string>()
   const lines = d.edges
     .map(e => {
-      const a = pos.get(e.from), b = pos.get(e.to)
+      const a = anchor.get(e.from), grouped = block.get(e.to), b = grouped ?? anchor.get(e.to)
       if (!a || !b) return ''
-      const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2, mx = (x1 + x2) / 2
-      return `<path d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2 - 6} ${y2}" fill="none" stroke="#758ca4" stroke-width="1.2" marker-end="url(#arrow)"/>`
+      const key = `${e.from}\u0000${grouped ? `${b.left}:${b.mid}` : e.to}`
+      if (drawn.has(key)) return ''
+      drawn.add(key)
+      const x1 = a.right, y1 = a.mid, x2 = b.left, y2 = b.mid, mx = (x1 + x2) / 2
+      return `<path class="edge" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2 - 6} ${y2}" fill="none" stroke="#758ca4" stroke-width="1.2" marker-end="url(#arrow)"/>`
     })
     .join('')
+
+  const dark = '.bg{fill:#1d232a}.box{fill:#28313a;stroke:#05a4a0}.box1{fill:#28313a;stroke:#4db1ff}.name{fill:#eaecee}.detail,.head,.ghead{fill:#a9b4be}.group{fill:#222a32;stroke:#3a4652}.edge{stroke:#758ca4}.arrow{fill:#758ca4}'
+  const style = scheme === 'light' ? '' : `<style>${scheme === 'dark' ? dark : `@media (prefers-color-scheme: dark){${dark}}`}</style>`
   const source =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="Inter, Segoe UI, Arial, sans-serif">` +
-    `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#758ca4"/></marker></defs>` +
-    `<rect width="${width}" height="${height}" rx="10" fill="#f5f6f7"/>${lines}${parts.join('')}</svg>`
+    style +
+    `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="arrow" d="M0 0 L8 4 L0 8 z" fill="#758ca4"/></marker></defs>` +
+    `<rect class="bg" width="${width}" height="${height}" rx="10" fill="#f5f6f7"/>${lines}${parts.join('')}</svg>`
   return { source, width, height }
+}
+
+/** What the diagram shows, for a reader that cannot see it: layers, their blocks and nodes, and the findings. */
+function diagramAlt(d: DiagramTile): string {
+  const layers = d.layers.map((l, li) => {
+    const groups = li > 0 ? groupsOf(l.nodes, d.edges) : null
+    const content = groups ? [...groups].map(([g, ns]) => `${g}: ${ns.map(n => n.name).join(', ')}`).join('; ') : l.nodes.map(n => n.name).join(', ')
+    return `${l.name}: ${content}`
+  })
+  const findings = d.findings.length ? `${d.findings.length} finding${d.findings.length === 1 ? '' : 's'}` : 'No findings'
+  return `Architecture diagram ${d.title}. ${layers.join('. ')}. ${findings}.`
 }
 
 // --- Target and sign-in -----------------------------------------------------
@@ -535,7 +626,7 @@ export const register: Register = on => {
                 {d.url ? <Link href={d.url} label="Open in the Tenantree Dashboard" /> : null}
               </Box>
               {Svg ? (
-                <Svg source={svg.source} alt={`${d.title}: ${d.layers.map(l => `${l.name}: ${l.nodes.map(n => n.name).join(', ')}`).join('; ')}`} width={Math.min(svg.width, 1100)} />
+                <Svg source={svg.source} alt={diagramAlt(d)} width={Math.min(svg.width, 1100)} />
               ) : (
                 <Markdown text={d.layers.map(l => `**${l.name}**\n${l.nodes.map(n => `- ${n.name}${n.detail[0] ? ` — ${n.detail[0]}` : ''}`).join('\n')}`).join('\n\n')} />
               )}

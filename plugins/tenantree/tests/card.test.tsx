@@ -159,3 +159,46 @@ test('the landscape diagram becomes an SVG tile after the reply', async ($, on) 
   expect(tile).toContain('Integration Suite')
   expect(tile).toContain('No findings.')
 })
+
+const TENANT = [
+  'Architecture diagram: Subaccount bics-labor',
+  'Layers, left to right:',
+  '1. Subaccounts',
+  '   - bics-labor',
+  '       This installation runs here',
+  '2. Subscriptions, instances',
+  '   - Integration Suite -- it-cpi049-prov / free',
+  '   - SAP HANA Cloud -- hana-cloud-tools / tools',
+  '   - mcp-apimgmt-guest -- Cloud Foundry instance',
+  '   - tenantree-cpi -- Cloud Foundry instance',
+  '   - tenantree_service_manager -- service-manager / subaccount-admin',
+  '',
+  'Connections (5):',
+  '  bics-labor -> Integration Suite (subscribed)',
+  '  bics-labor -> SAP HANA Cloud (subscribed)',
+  '  bics-labor -> mcp-apimgmt-guest',
+  '  bics-labor -> tenantree-cpi',
+  '  bics-labor -> tenantree_service_manager',
+  '',
+  'Findings (0):',
+  '  None.',
+].join('\n')
+
+test('the tenant diagram groups the second layer into blocks with one connection each', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TENANT }], text: TENANT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_diagram_read', tool_use_id: 'toolu_t', kind: 'tenant' } as never)
+  await $.turn.complete?.({ answer: 'The tenant landscape.', durationMs: 1, isAborted: false, turnId: 'tt', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'The tenant landscape.', isFirstOfReply: true } } as never)
+  const tile = JSON.stringify(await reply.drawn())
+  expect(tile).toContain('SAP subscriptions')
+  expect(tile).toContain('tenantree access')
+  expect(tile).toContain('Other instances')
+  expect(tile).toContain('tenantree_service_manager')
+  expect(tile).toContain('prefers-color-scheme: dark')
+  expect(tile.split('class=\\"edge\\"').length - 1).toBe(3)
+})
