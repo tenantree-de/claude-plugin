@@ -870,11 +870,14 @@ export const register: Register = on => {
                 <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
               </>
             ) : email ? (
-              <>
-                <Text dimColor>Signed in as</Text>
+              // Two lines (operator, 17.10.2026): the label with Sign out right-aligned above the e-mail.
+              <Box flexDirection="column">
+                <Box justifyContent="space-between" alignItems="center" gap={2}>
+                  <Text dimColor>Signed in as</Text>
+                  <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+                </Box>
                 <Text>{email}</Text>
-                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-              </>
+              </Box>
             ) : (
               <Text dimColor>Reading the account …</Text>
             )}
