@@ -21,3 +21,8 @@ tenantree connects you to the SAP BTP landscapes the person is assigned to in th
 - The rights come from the customer's SAP Cloud Identity Services and SAP BTP. If tenantree reports "read" or "no access", do not look for workarounds; explain which IAS group or role is missing and that an administrator of the customer assigns it.
 - Never ask for passwords, client secrets or service keys in the chat. Secrets are exchanged only through the one-time links tenantree provides.
 - If the sign-in at tenantree itself fails, the person runs `/mcp`, selects the server `tenantree` and signs in again.
+
+## Account commands in the chat
+
+- "tenantree login": call `tenantree_profile_read` once and answer in one sentence with the signed-in account. The call connects tenantree and updates the tenantree band. If the tenantree tools are not available, tell the person to run `/mcp`, select `tenantree` and choose Authenticate, then to write "tenantree login" again.
+- "tenantree logout" or "Sign me out of tenantree": call `tenantree_session_delete` once and confirm in one sentence.

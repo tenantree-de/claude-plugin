@@ -533,6 +533,8 @@ const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new
  */
 let signOutRequestedAt = 0
 const SIGNOUT_WINDOW_MS = 3 * 60 * 1000
+const LOGIN_CONTEXT =
+  'The person wrote "tenantree login": call tenantree_profile_read once and answer in one sentence with the signed-in account. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
 const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b/i
 
@@ -599,10 +601,10 @@ async function signIn($: EngineInterface) {
   await update($, message, () => (filled?.isFilled ? SIGNIN_READY : SIGNIN_HELP))
 }
 const SIGNIN_NOTES = ['/mcp is in the prompt box', 'To sign in,', 'Connecting to tenantree']
-const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select tenantree and choose Authenticate.'
+const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select tenantree and choose Authenticate. Afterwards write: tenantree login'
 let lastStatus = 0
 const STATUS_MS = 30_000
-const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate.'
+const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate. Afterwards write: tenantree login'
 
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
 /**
@@ -640,7 +642,12 @@ export const register: Register = on => {
     await update($, turn, () => []).catch(() => {})
     // Only a message the person sent themselves counts as a sign-out request.
     const origin = (e as { origin?: { kind?: string } }).origin?.kind
-    if (origin !== 'plugin' && ASKS_SIGNOUT.test(String((e as { text?: unknown }).text ?? ''))) signOutRequestedAt = await $.clock.now()
+    const said = String((e as { text?: unknown }).text ?? '').trim()
+    if (origin !== 'plugin' && (ASKS_SIGNOUT.test(said) || /^tenantree\s+log\s?out\.?$/i.test(said))) signOutRequestedAt = await $.clock.now()
+    // "tenantree login" (operator, 17.10.2026): one read-only call that connects tenantree and fills the band.
+    if (origin !== 'plugin' && /^tenantree\s+log\s?in\.?$/i.test(said)) {
+      return next({ ...e, context: [...((e as { context?: readonly string[] }).context ?? []), LOGIN_CONTEXT] } as typeof e)
+    }
     const at = await $.clock.now()
     if (at - lastStatus > STATUS_MS) {
       lastStatus = at
