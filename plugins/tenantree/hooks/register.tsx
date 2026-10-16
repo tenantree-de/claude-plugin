@@ -418,6 +418,18 @@ async function refresh($: EngineInterface) {
   if (!landscapes.isError) await remember($, landscapes)
 }
 
+/** Reads the list of subaccounts for the picker (read-only), at most every 30 seconds. */
+let lastTargets = 0
+async function loadTargets($: EngineInterface) {
+  const now = await $.clock.now()
+  if (now - lastTargets < 30_000) return
+  lastTargets = now
+  const name = await serverOf($)
+  if (!name) return
+  const landscapes = await $.mcp.call(name, 'tenantree_landscape_query', {})
+  if (!landscapes.isError) await remember($, landscapes)
+}
+
 /** A call the person asked for with a button: the press goes along as their request. */
 async function pressed($: EngineInterface, tool: string, args: Record<string, unknown>, what: string, consent?: string) {
   const r = (await $.tool.call({ tool: `${PREFIX}${tool}`, ...args, consent: consent ?? `The user pressed "${what}" in the tenantree band.` } as never)) as unknown
@@ -915,6 +927,8 @@ export const register: Register = on => {
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
     if (acc.status === 'signedOut') void watchSignIn($).catch(() => {})
+    // The picker needs the list of subaccounts; after a sign-in only the active target may be known.
+    if (acc.status !== 'signedOut' && state.status === 'known' && !state.targets?.length) void loadTargets($).catch(() => {})
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
@@ -981,7 +995,7 @@ export const register: Register = on => {
             )}
           </Box>
           <Box width={RIGHT} justifyContent="flex-end">
-            <Box {...ROW} gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={2}>
+            <Box {...ROW} gap={1}>
               {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
               {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
               <Link href={dashboard} label="tenantree" />

@@ -12,7 +12,11 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   const calls: string[] = []
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: false, reason: 'auth', message: 'Needs sign-in.' } }) as never)
+  // Connected; the picker list comes from the landscape query the band reads itself.
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', organization: 'Brauer IT', landscape: 'BICS BTP', system: 'Labor', kind: 'development', active: true }, { id: 's2', organization: 'Brauer IT', landscape: 'BICS BTP', system: 'QS', kind: 'quality', active: false }], activeTarget: { organization: 'Brauer IT', landscape: 'BICS BTP', system: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' } })
+  on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: LIST }], isError: false } }) as never)
+  on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
   on('tool.call', async (_$, e) => {
     calls.push(String(e.tool))
     if (e.tool === `${P}tenantree_session_delete`) return { deny: 'The server-side auto mode classifier gave no verdict.' } as never
@@ -24,6 +28,10 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 160 } } as never)
   const before = JSON.stringify(await band.drawn())
   expect(before).toContain('person@example.test')
+  // The subaccount picker stays: the band reads the list when only the active target is known.
+  const withList = JSON.stringify(await band.drawn())
+  expect(withList).toContain('"type":"Select"')
+  expect(withList).toContain('Brauer IT → BICS BTP → QS')
   expect(before).toContain('Sign out')
 
   // The model cannot sign the person out.
