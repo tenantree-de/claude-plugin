@@ -61,6 +61,7 @@ declare module 'claude-code' {
       server: string | null
       message: string | null
       plans: Record<string, PlanCardState>
+      signin: { url: string; system: string | null; at: number } | null
     }
   }
 }

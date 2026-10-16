@@ -15,6 +15,10 @@ const target = atom({ plugin: 'tenantree', key: 'target' } as const, { status: '
 const server = atom({ plugin: 'tenantree', key: 'server' } as const, null as string | null)
 const message = atom({ plugin: 'tenantree', key: 'message' } as const, null as string | null)
 const plans = atom({ plugin: 'tenantree', key: 'plans' } as const, {} as Record<string, PlanCardState>)
+const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
+/** The one-time sign-in link at the IAS of a system (tenantree_landscape_signin), valid 10 minutes. */
+const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
+const SIGNIN_MS = 10 * 60 * 1000
 
 const LEVEL: Record<string, string> = { structure: 'Structure', landscape: 'Landscape', account: 'Account' }
 /** The plan id in a plan answer: the approval page link names it. */
@@ -147,6 +151,14 @@ export const register: Register = on => {
       // The band and the card must never disturb the tool call itself.
       await remember($, result).catch(() => {})
       if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
+      // The sign-in link becomes a tile in the band; any other answer of tenantree means the person is through.
+      const signinUrl = m[1] === 'tenantree_landscape_signin' ? SIGNIN_LINK.exec(textOf(result))?.[0] : undefined
+      const failed = Boolean((result as { isError?: boolean } | null)?.isError)
+      const at = await $.clock.now()
+      if (signinUrl) {
+        const t = await read($, target).catch(() => null)
+        await update($, signin, () => ({ url: signinUrl, system: t?.status === 'known' && t.target ? t.target.system : null, at })).catch(() => {})
+      } else if (!failed && !(m[1] ?? '').startsWith('tenantree_')) await update($, signin, () => null).catch(() => {})
       // A plan answer of a writing tool; not the plan read itself, which names the same page.
       const planId = m[1] === 'tenantree_plan_read' ? undefined : PLAN_LINK.exec(textOf(result))?.[1]
       const id = e.tool_use_id
@@ -162,7 +174,9 @@ export const register: Register = on => {
   // Open cards learn their decision when the person comes back to the chat.
   on('prompt.submit', async ($, e, next) => {
     // The first read at session start may come before the server is connected: try again.
-    if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
+    const now = await read($, target).catch(() => null)
+    const waiting = await read($, signin).catch(() => null)
+    if (now?.status === 'unknown' || waiting || (now?.status === 'known' && now.target && now.target.right === 'none')) void refresh($).catch(() => {})
     const all = await read($, plans).catch(() => ({} as Record<string, PlanCardState>))
     for (const [id, c] of Object.entries(all)) if (c.status === 'open' || c.status === 'loading') void loadCard($, id, c.planId).catch(() => {})
     return next(e)
@@ -245,7 +259,9 @@ export const register: Register = on => {
     const cards = Object.entries(await read($, plans)).filter(([, c]) =>
       c.status === 'open' || c.status === 'loading' || (c.status === 'decided' && c.at !== undefined && now - c.at < 10 * 60 * 1000),
     )
-    if (state.status === 'unknown' && cards.length === 0) return next(e)
+    const pendingSignin = await read($, signin)
+    const signinOpen = pendingSignin && now - pendingSignin.at < SIGNIN_MS ? pendingSignin : null
+    if (state.status === 'unknown' && cards.length === 0 && !signinOpen) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
     // The picker where the surface draws one (terminal and desktop; not the mobile app).
@@ -275,6 +291,29 @@ export const register: Register = on => {
     const updateAll = () => {
       for (const [id, c] of cards) void loadCard($, id, c.planId).catch(() => {})
     }
+    // SIGN-IN AS A TILE (operator, 16.10.2026): the link at the IAS stands in the band, and where the
+    // person is not admitted at the active target, a button asks tenantree for a new link.
+    const askSignin = async () => {
+      const name = await serverOf($)
+      if (!name) return
+      const r = await $.mcp.call(name, 'tenantree_landscape_signin', {})
+      const url = SIGNIN_LINK.exec(textOf(r))?.[0]
+      const at = await $.clock.now()
+      if (url) await update($, signin, () => ({ url, system: t?.system ?? null, at }))
+    }
+    const notAdmitted = state.status === 'known' && t && (!t.signedIn || t.right === 'none')
+    const signinRow = signinOpen ? (
+      <Box gap={1} marginTop={1}>
+        <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
+        <Link href={signinOpen.url} label="Sign in" />
+        <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
+      </Box>
+    ) : notAdmitted ? (
+      <Box gap={1} marginTop={1}>
+        <Text color="warning">◆ Not signed in at the IAS of {t.system}.</Text>
+        <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
+      </Box>
+    ) : null
     const approvals = cards.length ? (
       <Box flexDirection="column" marginTop={1}>
         {cards.map(([id, c]) => (
@@ -307,6 +346,7 @@ export const register: Register = on => {
           </Box>
           {account}
         </Box>
+        {signinRow}
         {approvals}
       </Box>
     )

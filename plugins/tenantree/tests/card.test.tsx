@@ -15,6 +15,8 @@ test('the plan card draws on the desktop under the tool call', async ($, on) => 
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   const r = await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_1', id: 'Tenantree_Demo_iFlow_X' } as never)
   expect((r as { text?: string }).text).toContain(PLAN)
+  // The tile reads its plan after the call has returned.
+  await new Promise(resolve => setTimeout(resolve, 50))
   for (const component of ['ToolUse'] as const) {
     const props = component === 'ToolResult'
       ? { tool_use_id: 'toolu_1', tool: TOOL, output: [{ type: 'text', text: TEXT }], isErrored: false }
