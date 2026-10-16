@@ -25,34 +25,32 @@ export type TargetState =
   | { status: 'unknown' }
   | { status: 'known'; target: ActiveTarget | null; account?: string; targets?: Target[]; at: number }
 
-/** The parsed plan as the server shows it on every card. */
-export type PlanParts = {
-  headline: string
-  facts: Array<{ label: string; value: string }>
-  values: Array<{ label: string; value: string }>
-  cost: { rows: Array<{ label: string; value: string }>; notes: string[]; traps: string[] } | null
-  warnings: string[]
-  notes: string[]
-}
+/** One row of a plan: a label and its value. */
+export type Row = { label: string; value: string }
 
-/** What the plan card of one tool call knows (tenantree_plan_status with details; never the code). */
-export type PlanCardState = {
+/** A plan tile: read from the plan text of the tool answer (the plugin calls nothing for it). */
+export type PlanTile = {
   planId: string
-  status: 'loading' | 'open' | 'decided' | 'closed' | 'unknown'
-  title?: string
-  level?: string
-  parts?: PlanParts
-  expiresAt?: number
-  url?: string | null
+  title: string
+  level: string | null
+  target: string | null
+  headline: string
+  facts: Row[]
+  values: Row[]
+  warnings: string[]
+  url: string | null
+  expiresAt: number
+  status: 'open' | 'decided' | 'closed' | 'checking' | 'unknown'
   decision?: 'approve' | 'reject'
   by?: string | null
-  channel?: string
   ok?: boolean
   at?: number
   first?: string
   error?: string
-  checkedAt: number
 }
+
+/** The tiles a reply shows after its text: the end of that text and the tiles' tool use ids. */
+export type Attached = { tail: string; ids: string[] }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -60,7 +58,9 @@ declare module 'claude-code' {
       target: TargetState
       server: string | null
       message: string | null
-      plans: Record<string, PlanCardState>
+      tiles: Record<string, PlanTile>
+      turn: string[]
+      attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
     }
   }

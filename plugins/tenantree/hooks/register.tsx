@@ -1,28 +1,43 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ActiveTarget, PlanCardState, Target, TargetState } from '../types'
+import type { ActiveTarget, Attached, PlanTile, Row, Target, TargetState } from '../types'
 
 /**
- * The tenantree band above the prompt (decision of the operator, 15.10.2026): always visible,
- * it shows organization -> landscape -> subaccount of the active target and the signed-in
- * account, and switches the target with a picker -- so no step runs in the wrong subaccount.
+ * tenantree in Claude Code (operator, 15./16.10.2026):
  *
- * The band calls the plugin's own MCP server "tenantree" (read-only tools for the band, the
- * landscape use tool for the picker).
+ * THE BAND above the prompt shows organization -> landscape -> subaccount of the active target, a
+ * picker to switch it, the sign-in at the IAS and the open approvals; the tenantree mark sits on
+ * the right.
+ *
+ * THE TILES come AFTER the reply, never in the middle of it: Claude Code draws no MCP Apps views
+ * for a plugin's server and folds tool calls away, so the mod draws each plan as a tile under the
+ * text of the reply that made it.
+ *
+ * NO CALLS OF ITS OWN IN THE BACKGROUND: auto mode refuses a plugin's calls nobody asked for
+ * (measured 16.10.2026). The tiles read the plan from the text of the tool answer; the plugin calls
+ * tenantree only when the person presses a button, and the press is passed on as their request.
  */
 const target = atom({ plugin: 'tenantree', key: 'target' } as const, { status: 'unknown' } as TargetState)
 const server = atom({ plugin: 'tenantree', key: 'server' } as const, null as string | null)
 const message = atom({ plugin: 'tenantree', key: 'message' } as const, null as string | null)
-const plans = atom({ plugin: 'tenantree', key: 'plans' } as const, {} as Record<string, PlanCardState>)
+const tiles = atom({ plugin: 'tenantree', key: 'tiles' } as const, {} as Record<string, PlanTile>)
+const turn = atom({ plugin: 'tenantree', key: 'turn' } as const, [] as string[])
+const attached = atom({ plugin: 'tenantree', key: 'attached' } as const, [] as Attached[])
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
-/** The one-time sign-in link at the IAS of a system (tenantree_landscape_signin), valid 10 minutes. */
+
+const PREFIX = 'mcp__plugin_tenantree_tenantree__'
+const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
+const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
-
+const PLAN_MS = 15 * 60 * 1000
+const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
 const LEVEL: Record<string, string> = { structure: 'Structure', landscape: 'Landscape', account: 'Account' }
-/** The plan id in a plan answer: the approval page link names it. */
-const PLAN_LINK = /\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
+// The tenantree mark (Logo E) for dark surfaces.
+const MARK =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-84 -38 780 780"><g transform="matrix(1.05 0 0 1.05 -0.7 -36)"><path fill="#05A4A0" d="M320 470 Q300 214 556 190 Q576 446 320 470Z"/><rect fill="#FFFFFF" x="224" y="80" width="137" height="640"/><rect fill="#0078CF" x="14" y="20" width="556" height="125"/></g></svg>'
+
 const textOf = (r: unknown): string => {
   if (typeof r === 'string') return r
   if (Array.isArray(r)) return r.map(textOf).join('\n')
@@ -35,13 +50,8 @@ const textOf = (r: unknown): string => {
   return ''
 }
 
-/** mcp__<server>__<tool> of a tenantree server: a server whose name ends with "tenantree". */
-const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
-const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
-
-/** Finds a field of the structured content in whatever shape a tool result arrives. */
+/** A field of the structured content, which Claude Code hands a plugin as JSON text (measured 15.10.2026). */
 function fieldOf(value: unknown, name: string, depth = 0): unknown {
-  // Measured 15.10.2026: Claude Code hands a plugin server's structured content over as JSON text.
   if (typeof value === 'string' && value.startsWith('{') && depth <= 4) {
     try {
       return fieldOf(JSON.parse(value), name, depth + 1)
@@ -51,8 +61,6 @@ function fieldOf(value: unknown, name: string, depth = 0): unknown {
   }
   if (!value || typeof value !== 'object' || depth > 4) return undefined
   const v = value as Record<string, unknown>
-  const sc = v.structuredContent as Record<string, unknown> | undefined
-  if (sc && typeof sc === 'object' && name in sc) return sc[name]
   if (name in v) return v[name]
   for (const child of Object.values(v)) {
     const found = fieldOf(child, name, depth + 1)
@@ -61,7 +69,60 @@ function fieldOf(value: unknown, name: string, depth = 0): unknown {
   return undefined
 }
 
-/** Keeps the active target, the account and the choosable targets from a tenantree result. */
+// --- The plan text ----------------------------------------------------------
+
+const FACT = /^([A-Z][A-Za-z ()/-]{1,28}):\s+(\S.*)$/
+const FOR_THE_MODEL = /^(Repeat the same call|APPROVAL REQUIRED|On this installation|Approval page|Give the person|Do not call again)/
+const LEFT_OUT = new Set(['Plan', 'Tool', 'Enabled because'])
+
+/** The plan as its text states it: what the tile shows. */
+function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | 'status'> {
+  const lines = text.split('\n')
+  const facts: Row[] = []
+  const values: Row[] = []
+  const warnings: string[] = []
+  let title = ''
+  let level: string | null = null
+  let target: string | null = null
+  let headline = ''
+  for (let i = 0; i < lines.length; i++) {
+    const t = (lines[i] ?? '').trim()
+    if (!t || FOR_THE_MODEL.test(t)) continue
+    if (!headline) {
+      headline = t
+      continue
+    }
+    if (t === 'With:') {
+      const block: string[] = []
+      for (i++; i < lines.length && (lines[i] ?? '').trim(); i++) block.push(lines[i] ?? '')
+      try {
+        for (const [k, v] of Object.entries(JSON.parse(block.join('\n')) as Record<string, unknown>)) values.push({ label: k, value: typeof v === 'string' ? v : JSON.stringify(v) })
+      } catch {
+        // Not JSON: left out of the tile; the reply names it.
+      }
+      continue
+    }
+    const plan = /^Plan:\s+(.*?)(?:\s+\(write level (\w+)\))?$/.exec(t)
+    if (plan) {
+      title = plan[1] ?? ''
+      level = plan[2] ?? null
+      continue
+    }
+    if (/^(WARNING|Warning|TRAP)[:\s]/.test(t)) {
+      warnings.push(t.replace(/^(WARNING|Warning|TRAP):?\s*/, ''))
+      continue
+    }
+    const fact = FACT.exec(t)
+    if (fact && fact[1] && fact[2]) {
+      if (fact[1] === 'Tenant') target = fact[2]
+      else if (!LEFT_OUT.has(fact[1])) facts.push({ label: fact[1], value: fact[2] })
+    }
+  }
+  return { title: title || 'Plan', level, target, headline, facts, values, warnings }
+}
+
+// --- Target and sign-in -----------------------------------------------------
+
 async function remember($: EngineInterface, result: unknown) {
   const found = fieldOf(result, 'activeTarget') as ActiveTarget | null | undefined
   if (found === undefined) return
@@ -74,7 +135,6 @@ async function remember($: EngineInterface, result: unknown) {
   })
 }
 
-/** The plugin's tenantree server as the engine names it, connected on first use. */
 async function serverOf($: EngineInterface): Promise<string | null> {
   const known = await read($, server)
   if (known) return known
@@ -84,7 +144,7 @@ async function serverOf($: EngineInterface): Promise<string | null> {
   return connected.server
 }
 
-/** Reads account, active target and choosable targets (read-only tools). */
+/** Reads the target (read-only tools; at session start and when the person comes back). */
 async function refresh($: EngineInterface) {
   const name = await serverOf($)
   if (!name) return
@@ -94,47 +154,44 @@ async function refresh($: EngineInterface) {
   if (!landscapes.isError) await remember($, landscapes)
 }
 
-/** Reads what the card shows for a plan (the server keeps the plan; the approval code never comes here). */
-async function loadCard($: EngineInterface, toolUseId: string, planId: string) {
-  const fail = async (error: string) => {
-    const at = await $.clock.now()
-    await update($, plans, all => ({ ...all, [toolUseId]: { ...all[toolUseId], planId, status: 'unknown' as const, error, checkedAt: at } }))
-  }
-  const name = await serverOf($).catch(() => null)
-  if (!name) return fail('tenantree is not connected in this session.')
-  let r: Awaited<ReturnType<EngineInterface['mcp']['call']>>
+/** A call the person asked for with a button: the press goes along as their request. */
+async function pressed($: EngineInterface, tool: string, args: Record<string, unknown>, what: string) {
+  const r = (await $.tool.call({ tool: `${PREFIX}${tool}`, ...args, consent: `The user pressed "${what}" in the tenantree band.` } as never)) as unknown
+  if (r && typeof r === 'object' && 'deny' in r) throw new Error(String((r as { deny: unknown }).deny))
+  return r as { text?: string; isError?: boolean; result?: unknown }
+}
+
+/** The state of one plan, on the person's press. */
+async function check($: EngineInterface, id: string) {
+  const tile = (await read($, tiles))[id]
+  if (!tile) return
+  await update($, tiles, all => ({ ...all, [id]: { ...tile, status: 'checking' as const } }))
   try {
-    r = await $.mcp.call(name, 'tenantree_plan_read', { planId })
+    const r = await pressed($, 'tenantree_plan_read', { planId: tile.planId }, 'Update status')
+    const body = r.text ?? textOf(r)
+    const status = String(fieldOf(body, 'status') ?? fieldOf(r, 'status') ?? 'unknown')
+    const get = <T,>(k: string) => (fieldOf(body, k) ?? fieldOf(r, k)) as T | undefined
+    await update($, tiles, all => ({
+      ...all,
+      [id]: {
+        ...tile,
+        status: (['open', 'decided', 'closed'].includes(status) ? status : 'unknown') as PlanTile['status'],
+        decision: get<'approve' | 'reject'>('decision'),
+        by: get<string | null>('by'),
+        ok: get<boolean>('ok'),
+        at: get<number>('at'),
+        first: get<string>('first'),
+        error: r.isError ? body.split('\n')[0] : undefined,
+      },
+    }))
   } catch (err) {
-    return fail(String((err as Error)?.message ?? err))
+    await update($, tiles, all => ({ ...all, [id]: { ...tile, status: 'unknown' as const, error: String((err as Error)?.message ?? err) } }))
   }
-  if (r.isError) return fail(textOf(r).split('\n')[0] || 'The plan could not be read.')
-  const status = String(fieldOf(r, 'status') ?? 'unknown')
-  const get = <T,>(k: string) => fieldOf(r, k) as T | undefined
-  const now = await $.clock.now()
-  await update($, plans, all => ({
-    ...all,
-    [toolUseId]: {
-      ...all[toolUseId],
-      planId,
-      status: (['open', 'decided', 'closed'].includes(status) ? status : 'unknown') as PlanCardState['status'],
-      title: get<string>('title') ?? all[toolUseId]?.title,
-      level: get<string>('level') ?? all[toolUseId]?.level,
-      parts: get<PlanCardState['parts']>('parts') ?? all[toolUseId]?.parts,
-      expiresAt: get<number>('expiresAt') ?? all[toolUseId]?.expiresAt,
-      url: get<string | null>('url') ?? all[toolUseId]?.url ?? null,
-      decision: get<'approve' | 'reject'>('decision'),
-      by: get<string | null>('by'),
-      channel: get<string>('channel'),
-      ok: get<boolean>('ok'),
-      at: get<number>('at'),
-      first: get<string>('first'),
-      checkedAt: now,
-    },
-  }))
 }
 
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
+const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+const normal = (s: string) => s.replace(/\s+/g, ' ').trim()
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -144,41 +201,51 @@ export const register: Register = on => {
     return result
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    await update($, turn, () => []).catch(() => {})
+    const now = await read($, target).catch(() => null)
+    const waiting = await read($, signin).catch(() => null)
+    if (now?.status === 'unknown' || waiting || (now?.status === 'known' && now.target?.right === 'none')) void refresh($).catch(() => {})
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     const m = typeof e.tool === 'string' ? TENANTREE_TOOL.exec(e.tool) : null
-    if (m) {
-      // The band and the card must never disturb the tool call itself.
-      await remember($, result).catch(() => {})
-      if ((await read($, target).catch(() => null))?.status === 'unknown') void refresh($).catch(() => {})
-      // The sign-in link becomes a tile in the band; any other answer of tenantree means the person is through.
-      const signinUrl = m[1] === 'tenantree_landscape_signin' ? SIGNIN_LINK.exec(textOf(result))?.[0] : undefined
+    const tool = m?.[1]
+    if (!tool) return result
+    // The band and the tiles must never disturb the tool call itself.
+    try {
+      await remember($, result)
+      const text = textOf(result)
       const failed = Boolean((result as { isError?: boolean } | null)?.isError)
       const at = await $.clock.now()
-      if (signinUrl) {
-        const t = await read($, target).catch(() => null)
-        await update($, signin, () => ({ url: signinUrl, system: t?.status === 'known' && t.target ? t.target.system : null, at })).catch(() => {})
-      } else if (!failed && !(m[1] ?? '').startsWith('tenantree_')) await update($, signin, () => null).catch(() => {})
-      // A plan answer of a writing tool; not the plan read itself, which names the same page.
-      const planId = m[1] === 'tenantree_plan_read' ? undefined : PLAN_LINK.exec(textOf(result))?.[1]
+      if (tool === 'tenantree_landscape_signin') {
+        const url = SIGNIN_LINK.exec(text)?.[0]
+        const t = await read($, target)
+        if (url) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
+      } else if (!failed && !tool.startsWith('tenantree_')) await update($, signin, () => null)
+      const link = tool === 'tenantree_plan_read' ? null : PLAN_LINK.exec(text)
       const id = e.tool_use_id
-      if (planId && id) {
-        const at = await $.clock.now()
-        await update($, plans, all => ({ ...all, [id]: { planId, status: 'loading' as const, checkedAt: at } })).catch(() => {})
-        void loadCard($, id, planId).catch(() => {})
+      if (link && link[1] && id) {
+        const tile: PlanTile = { ...planOf(text), planId: link[1], url: link[0], expiresAt: at + PLAN_MS, status: 'open' }
+        await update($, tiles, all => ({ ...all, [id]: tile }))
+        await update($, turn, ids => [...ids, id])
       }
+    } catch {
+      // Nothing of the band is worth a failed tool call.
     }
     return result
   })
 
-  // Open cards learn their decision when the person comes back to the chat.
-  on('prompt.submit', async ($, e, next) => {
-    // The first read at session start may come before the server is connected: try again.
-    const now = await read($, target).catch(() => null)
-    const waiting = await read($, signin).catch(() => null)
-    if (now?.status === 'unknown' || waiting || (now?.status === 'known' && now.target && now.target.right === 'none')) void refresh($).catch(() => {})
-    const all = await read($, plans).catch(() => ({} as Record<string, PlanCardState>))
-    for (const [id, c] of Object.entries(all)) if (c.status === 'open' || c.status === 'loading') void loadCard($, id, c.planId).catch(() => {})
+  // The tiles of a turn go under the text of its reply.
+  on('turn.complete', async ($, e, next) => {
+    const ids = await read($, turn).catch(() => [] as string[])
+    if (ids.length && e.answer) {
+      const tail = normal(e.answer).slice(-160)
+      await update($, attached, list => [...list.slice(-50), { tail, ids }]).catch(() => {})
+      await update($, turn, () => []).catch(() => {})
+    }
     return next(e)
   })
 
@@ -192,60 +259,59 @@ export const register: Register = on => {
     return { text: lines.join('\n') }
   })
 
-  // THE PLAN CARD (15.10.2026, option 1 of the operator): Claude Code draws no MCP Apps views for a
-  // plugin's server and passes it no _meta, so the mod draws the card itself under the tool call.
-  // It shows the plan and its status; approving stays on the approval page (personal sign-in), so the
-  // model can still not approve on its own.
-  // Drawn with the call's row itself (ToolUse): the Code tab folds a call's result away, so a card under
-  // the result (ToolResult) would stay hidden until the person unfolds it (15.10.2026).
-  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
-    if (!TENANTREE_TOOL.test(String(e.props.tool)) || e.props.isErrored) return next(e)
-    const card = (await read($, plans))[e.props.tool_use_id]
-    if (!card) return next(e)
-    const row = await next(e)
+  // THE TILES AFTER THE REPLY (operator, 16.10.2026).
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    const list = await read($, attached)
+    if (!list.length) return next(e)
+    const text = normal(e.props.text)
+    const hit = list.find(a => a.tail && text.endsWith(a.tail))
+    if (!hit) return next(e)
+    const all = await read($, tiles)
+    const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
+    if (!shown.length) return next(e)
+    const reply = await next(e)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const p = card.parts
-    const t = await read($, target)
-    const where = t.status === 'known' && t.target ? path(t.target) : null
-    const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
-    const rows = (list: Array<{ label: string; value: string }>) =>
-      list.map(f => (
+    const now = await $.clock.now()
+    const rows = (rs: Row[]) =>
+      rs.map(f => (
         <Box key={f.label}>
-          <Box width={24}><Text dimColor>{f.label}</Text></Box>
+          <Box width={22}><Text dimColor>{f.label}</Text></Box>
           <Text>{f.value}</Text>
         </Box>
       ))
-    const refresh = () => void loadCard($, e.props.tool_use_id, card.planId).catch(() => {})
-    const decided =
-      card.status === 'decided'
-        ? `${card.decision === 'approve' ? (card.ok === false ? 'Approved, but not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${card.by ? ` by ${card.by}` : ''}${card.at ? ` at ${time(card.at)}` : ''}${card.channel === 'page' ? ' on the approval page' : ''}.`
-        : null
     return (
-      <Box flexDirection="column">
-      {row}
-      <Box flexDirection="column" borderStyle="round" borderColor={card.status === 'open' ? 'suggestion' : undefined} paddingX={1}>
-        <Box justifyContent="space-between">
-          <Text bold>{card.title ?? 'Plan'}</Text>
-          {card.level ? <Text dimColor>Write level: {LEVEL[card.level] ?? card.level}</Text> : null}
-        </Box>
-        {where ? <Text dimColor>Target: {where}</Text> : null}
-        {card.status === 'loading' ? <Text dimColor>Loading the plan …</Text> : null}
-        {card.status === 'unknown' ? <Text color="error">The plan could not be read{card.error ? `: ${card.error}` : '.'}</Text> : null}
-        {p?.headline ? <Text>{p.headline}</Text> : null}
-        {p?.facts.length ? <Box flexDirection="column" marginTop={1}>{rows(p.facts)}</Box> : null}
-        {p?.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}
-        {p?.cost ? <Box flexDirection="column" marginTop={1}><Text dimColor>Cost</Text>{rows(p.cost.rows)}{p.cost.traps.map(x => <Text key={x} color="warning">{x}</Text>)}</Box> : null}
-        {p?.warnings.map(w => <Text key={w} color="warning">{w}</Text>)}
-        <Box marginTop={1} gap={2} alignItems="center">
-          {card.status === 'open' && card.url ? <Link href={card.url} label="Approve or reject on the approval page" /> : null}
-          {card.status === 'open' ? <Text dimColor>Valid until {time(card.expiresAt)}. Nothing is changed until you approve.</Text> : null}
-          {decided ? <Text color={card.decision === 'approve' && card.ok !== false ? 'success' : card.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
-          {card.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
-          {card.status !== 'loading' ? <Button key={`refresh-${card.planId}`} label="Update status" onPress={refresh} /> : null}
-        </Box>
-        {decided && card.first ? <Text dimColor>{card.first}</Text> : null}
-        {decided && card.url ? <Link href={card.url} label="Show the decision in the browser" /> : null}
-      </Box>
+      <Box flexDirection="column" gap={1}>
+        {reply}
+        {shown.map(([id, p]) => {
+          const expired = p.status === 'open' && now > p.expiresAt
+          const decided =
+            p.status === 'decided'
+              ? `${p.decision === 'approve' ? (p.ok === false ? 'Approved, but not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.`
+              : null
+          return (
+            <Box key={id} flexDirection="column" borderStyle="round" borderColor={p.status === 'open' && !expired ? 'suggestion' : undefined} paddingX={1}>
+              <Box justifyContent="space-between">
+                <Text bold>{p.title}</Text>
+                {p.level ? <Text dimColor>Write level: {LEVEL[p.level] ?? p.level}</Text> : null}
+              </Box>
+              {p.target ? <Text dimColor>Target: {p.target}</Text> : null}
+              {p.facts.length ? <Box flexDirection="column" marginTop={1}>{rows(p.facts)}</Box> : null}
+              {p.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}
+              {p.warnings.map(w => <Text key={w} color="warning">{w}</Text>)}
+              <Box marginTop={1} gap={2} alignItems="center">
+                {p.status === 'open' && !expired && p.url ? <Link href={p.url} label="Approve or reject" /> : null}
+                {p.status === 'open' && !expired ? <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text> : null}
+                {expired ? <Text dimColor>Expired at {time(p.expiresAt)} unless decided before.</Text> : null}
+                {decided ? <Text color={p.decision === 'approve' && p.ok !== false ? 'success' : p.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
+                {p.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
+                {p.status === 'checking' ? <Text dimColor>Reading the status …</Text> : null}
+                {p.status === 'unknown' ? <Text color="error">The status could not be read{p.error ? `: ${p.error}` : '.'}</Text> : null}
+                {p.status !== 'checking' ? <Button key={`update-${id}`} label="Update status" onPress={() => void check($, id)} /> : null}
+              </Box>
+              {decided && p.first ? <Text dimColor>{p.first}</Text> : null}
+            </Box>
+          )
+        })}
       </Box>
     )
   })
@@ -253,101 +319,90 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const state = await read($, target)
-    // OPEN APPROVALS IN THE BAND (15.10.2026): the Code tab folds tool calls ("2 tools used"), so the
-    // card under a call stays hidden; the band above the prompt is always in view.
     const now = await $.clock.now()
-    const cards = Object.entries(await read($, plans)).filter(([, c]) =>
-      c.status === 'open' || c.status === 'loading' || (c.status === 'decided' && c.at !== undefined && now - c.at < 10 * 60 * 1000),
-    )
-    const pendingSignin = await read($, signin)
-    const signinOpen = pendingSignin && now - pendingSignin.at < SIGNIN_MS ? pendingSignin : null
-    if (state.status === 'unknown' && cards.length === 0 && !signinOpen) return next(e)
+    const all = await read($, tiles)
+    const open = Object.entries(all).filter(([, p]) => p.status === 'open' && now <= p.expiresAt)
+    const pending = await read($, signin)
+    const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
+    if (state.status === 'unknown' && !open.length && !signinOpen) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
-    // The picker where the surface draws one (terminal and desktop; not the mobile app).
+    // The picker and the mark where the surface draws them (terminal: no Svg; mobile: no Select).
     const Select = 'Select' in els ? els.Select : null
+    const Svg = 'Svg' in els ? els.Svg : null
     const t = state.status === 'known' ? state.target : null
-    const note = await read($, message)
-    const account = state.status === 'known' && state.account ? <Text dimColor>{state.account}</Text> : null
     const targets = state.status === 'known' ? state.targets ?? [] : []
     const active = targets.find(x => x.active)
+    const note = await read($, message)
     const choose = async (id: string) => {
-      const name = await serverOf($)
-      if (!name || id === active?.id) return
-      await update($, message, () => 'Switching target …')
-      const r = await $.mcp.call(name, 'tenantree_landscape_use', { systemId: id })
-      await remember($, r)
-      await refresh($).catch(() => {})
-      await update($, message, () => (r.isError ? 'The target could not be switched.' : null))
+      if (id === active?.id) return
+      await update($, message, () => 'Switching the subaccount …')
+      try {
+        const r = await pressed($, 'tenantree_landscape_use', { systemId: id }, 'Switch subaccount')
+        await remember($, r.text ?? r)
+        await refresh($).catch(() => {})
+        await update($, message, () => (r.isError ? 'The subaccount could not be switched.' : null))
+      } catch {
+        await update($, message, () => 'The subaccount could not be switched.')
+      }
+    }
+    const askSignin = async () => {
+      try {
+        const r = await pressed($, 'tenantree_landscape_signin', {}, 'Sign in')
+        const url = SIGNIN_LINK.exec(r.text ?? textOf(r))?.[0]
+        const at = await $.clock.now()
+        if (url) await update($, signin, () => ({ url, system: t?.system ?? null, at }))
+      } catch {
+        await update($, message, () => 'The sign-in link could not be created.')
+      }
     }
     const isProduction = t?.kind === 'production'
     const picker =
-      Select && targets.length > 0 ? (
-        <Select key="target" options={targets.map(x => ({ value: x.id, label: `${path(x)} · ${KIND[x.kind]}` }))} value={active?.id} onSelect={(v: string) => void choose(v)} />
+      state.status === 'unknown' ? (
+        <Text dimColor>Reading the subaccount …</Text>
+      ) : Select && targets.length > 0 ? (
+        <Select key="target" options={targets.map(x => ({ value: x.id, label: path(x) }))} value={active?.id} onSelect={(v: string) => void choose(v)} />
       ) : (
-        <Text bold>{t ? path(t) : 'No active target'}</Text>
+        <Text bold>{t ? path(t) : 'No subaccount chosen'}</Text>
       )
-    const time = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
-    const updateAll = () => {
-      for (const [id, c] of cards) void loadCard($, id, c.planId).catch(() => {})
-    }
-    // SIGN-IN AS A TILE (operator, 16.10.2026): the link at the IAS stands in the band, and where the
-    // person is not admitted at the active target, a button asks tenantree for a new link.
-    const askSignin = async () => {
-      const name = await serverOf($)
-      if (!name) return
-      const r = await $.mcp.call(name, 'tenantree_landscape_signin', {})
-      const url = SIGNIN_LINK.exec(textOf(r))?.[0]
-      const at = await $.clock.now()
-      if (url) await update($, signin, () => ({ url, system: t?.system ?? null, at }))
-    }
     const notAdmitted = state.status === 'known' && t && (!t.signedIn || t.right === 'none')
-    const signinRow = signinOpen ? (
-      <Box gap={1} marginTop={1}>
-        <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
-        <Link href={signinOpen.url} label="Sign in" />
-        <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
-      </Box>
-    ) : notAdmitted ? (
-      <Box gap={1} marginTop={1}>
-        <Text color="warning">◆ Not signed in at the IAS of {t.system}.</Text>
-        <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
-      </Box>
-    ) : null
-    const approvals = cards.length ? (
-      <Box flexDirection="column" marginTop={1}>
-        {cards.map(([id, c]) => (
-          <Box key={id} gap={1}>
-            {c.status === 'decided' ? (
-              <Text color={c.decision === 'approve' && c.ok !== false ? 'success' : c.ok === false ? 'error' : undefined}>
-                {c.decision === 'approve' ? (c.ok === false ? '✗ Not carried out:' : '✓ Approved:') : '– Rejected:'}
-              </Text>
-            ) : (
-              <Text color="warning">◆ Approval pending:</Text>
-            )}
-            <Text bold>{c.title ?? 'Plan'}</Text>
-            {c.status === 'open' ? <Text dimColor>until {time(c.expiresAt)}</Text> : null}
-            {c.status === 'decided' && c.first ? <Text dimColor>{c.first}</Text> : null}
-            {c.status === 'open' && c.url ? <Link href={c.url} label="Approve or reject" /> : null}
-          </Box>
-        ))}
-        {cards.some(([, c]) => c.status !== 'decided') ? <Box><Button key="approvals-update" label="Update status" onPress={updateAll} /></Box> : null}
-      </Box>
-    ) : null
     return (
       <Box flexDirection="column">
-        <Box justifyContent="space-between">
-          <Box>
-            <Text color={isProduction ? 'error' : 'success'} bold>{isProduction ? '● ' : '○ '}</Text>
-            <Text bold>tenantree </Text>
-            {state.status === 'unknown' ? <Text dimColor>reading the target …</Text> : picker}
-            {state.status === 'known' && !t ? <Text dimColor> · please choose a subaccount</Text> : null}
-            {note ? <Text dimColor> · {note}</Text> : null}
+        <Box justifyContent="space-between" alignItems="center">
+          <Box alignItems="center" gap={1}>
+            {isProduction ? <Text color="error" bold>● Production</Text> : null}
+            {picker}
+            {note ? <Text dimColor>{note}</Text> : null}
           </Box>
-          {account}
+          <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
+            {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
+            <Text color="#c9ced4" bold>tenantree</Text>
+          </Box>
         </Box>
-        {signinRow}
-        {approvals}
+        {signinOpen ? (
+          <Box gap={1} marginTop={1} alignItems="center">
+            <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
+            <Link href={signinOpen.url} label="Sign in" />
+            <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
+          </Box>
+        ) : notAdmitted ? (
+          <Box gap={1} marginTop={1} alignItems="center">
+            <Text color="warning">◆ Not signed in at the IAS of {t.system}.</Text>
+            <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
+          </Box>
+        ) : null}
+        {open.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            {open.map(([id, p]) => (
+              <Box key={id} gap={1} alignItems="center">
+                <Text color="warning">◆ Approval pending:</Text>
+                <Text bold>{p.title}</Text>
+                <Text dimColor>until {time(p.expiresAt)}</Text>
+                {p.url ? <Link href={p.url} label="Approve or reject" /> : null}
+              </Box>
+            ))}
+          </Box>
+        ) : null}
       </Box>
     )
   })
