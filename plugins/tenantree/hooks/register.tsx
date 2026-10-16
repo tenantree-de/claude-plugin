@@ -966,7 +966,13 @@ export const register: Register = on => {
       state.status === 'unknown' ? (
         <Text dimColor>Reading the subaccount …</Text>
       ) : Select && targets.length > 0 ? (
-        <Select key="target" options={targets.map(x => ({ value: x.id, label: path(x) }))} value={active?.id} onSelect={(v: string) => void choose(v)} />
+        // Without an active target the picker says so instead of showing the first entry as if it were chosen.
+        <Select
+          key="target"
+          options={[...(active ? [] : [{ value: '', label: 'Choose a subaccount' }]), ...targets.map(x => ({ value: x.id, label: path(x) }))]}
+          value={active?.id ?? ''}
+          onSelect={(v: string) => void (v ? choose(v) : null)}
+        />
       ) : (
         <Text bold>{t ? path(t) : 'No subaccount chosen'}</Text>
       )
