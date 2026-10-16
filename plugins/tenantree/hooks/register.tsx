@@ -581,19 +581,24 @@ async function signOut($: EngineInterface) {
  */
 let watching: { cancel: () => void } | null = null
 let lastWatch = 0
-const WATCH_MS = 3000
+const WATCH_MS = 5000
 
+/**
+ * THE CONNECTION STAYS (operator, 17.10.2026): Claude Code drops an MCP server whose connection broke (for
+ * example while tenantree is redeployed) and does not dial it again by itself. The plugin dials it on a timer;
+ * when it comes back, or the person signed in meanwhile, the band reads the state again. Connecting calls no tool.
+ */
+let wasConnected = true
 async function checkSignIn($: EngineInterface) {
   lastWatch = await $.clock.now()
-  if ((await read($, account)).status !== 'signedOut') {
-    watching?.cancel()
-    watching = null
-    return
-  }
   const c = await $.mcp.connect('tenantree').catch(() => null)
+  const before = wasConnected
+  wasConnected = Boolean(c?.isConnected)
   if (!c?.isConnected) return
-  await update($, server, () => c.server)
-  await refresh($).catch(() => {})
+  if (!before || (await read($, account)).status !== 'signedIn') {
+    await update($, server, () => c.server)
+    await refresh($).catch(() => {})
+  }
 }
 
 /**
@@ -665,6 +670,7 @@ export const register: Register = on => {
     if (Object.values(await read($, tiles).catch(() => ({}))).some(p => p.status === 'open')) await follow($)
     await $.command.register({ name: 'tenantree', description: 'tenantree account: show it, sign in or sign out', argumentHint: '[signin | signout]' })
     void refresh($).catch(() => {})
+    void watchSignIn($).catch(() => {})
     return result
   })
 
@@ -720,7 +726,9 @@ export const register: Register = on => {
       if (tool === 'tenantree_landscape_signin') {
         const url = SIGNIN_LINK.exec(text)?.[0]
         const t = await read($, target)
-        if (url) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
+        // A link while already signed in (a renewal) is no pending sign-in for the band.
+        const already = t.status === 'known' && t.target?.signedIn
+        if (url && !already) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
       } else if (!failed && !tool.startsWith('tenantree_')) await update($, signin, () => null)
       const id = e.tool_use_id
       // THE DIAGRAM TILE (16.10.2026): the landscape drawn by the plugin after the reply.
@@ -946,7 +954,7 @@ export const register: Register = on => {
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
-    if (acc.status === 'signedOut') void watchSignIn($).catch(() => {})
+    void watchSignIn($).catch(() => {})
     // The picker needs the list of subaccounts; after a sign-in only the active target may be known.
     if (acc.status !== 'signedOut' && state.status === 'known' && !state.targets?.length) void loadTargets($).catch(() => {})
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
