@@ -511,10 +511,16 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
 }
 
 /** THE PERSON SIGNS OUT (TEPLU-12, TEN-537): the server revokes every token of this connection. */
+/** Set while the Sign out button runs: the guard below lets only this call through, never the model's. */
+let signingOut = false
+
 async function signOut($: EngineInterface) {
   await update($, message, () => 'Signing out …')
+  signingOut = true
   try {
-    const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out')
+    const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out').finally(() => {
+      signingOut = false
+    })
     if (r.isError) throw new Error(r.text ?? textOf(r))
     await update($, account, (): AccountState => ({ status: 'signedOut' }))
     await update($, target, (): TargetState => ({ status: 'unknown' }))
@@ -522,8 +528,9 @@ async function signOut($: EngineInterface) {
     await update($, signin, () => null)
     await $.store.set(STORE_KEY, null).catch(() => {})
     await update($, message, () => null)
-  } catch {
-    await update($, message, () => 'Sign-out failed. Please try again.')
+  } catch (err) {
+    const reason = String((err as Error)?.message ?? err).split('\n')[0]?.slice(0, 160)
+    await update($, message, () => `Sign-out failed${reason ? `: ${reason}` : '.'}`)
   }
 }
 
@@ -580,7 +587,7 @@ export const register: Register = on => {
 
   // Only the Sign out button signs the connection out (TEN-537): never the model on its own.
   on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) => {
-    if (!String((e as { consent?: unknown }).consent ?? '').includes('in the tenantree band')) {
+    if (!signingOut) {
       return { deny: 'Signing out is done by the person with the Sign out button of the tenantree band.' }
     }
     return next(e)
