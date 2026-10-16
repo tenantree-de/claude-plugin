@@ -47,5 +47,5 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
 
   // Sign in: where the host cannot start the sign-in, the band names the way through /mcp.
   await band.press({ key: 'signin-tenantree' } as never)
-  expect(JSON.stringify(await band.drawn())).toContain('run /mcp, select tenantree and choose Authenticate')
+  expect(JSON.stringify(await band.drawn())).toContain('select tenantree and choose Authenticate')
 })

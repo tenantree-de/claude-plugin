@@ -566,8 +566,13 @@ async function signIn($: EngineInterface) {
     await refresh($).catch(() => {})
   }
   const now = await read($, account)
-  await update($, message, () => (now.status === 'signedIn' ? null : SIGNIN_HELP))
+  if (now.status === 'signedIn') return update($, message, () => null)
+  // Claude Code starts the OAuth sign-in only from /mcp (measured 17.10.2026): the band puts the command into
+  // the prompt box, so one Enter opens it. The person keeps the choice; nothing is sent by itself.
+  const filled = await $.prompt.fill({ text: '/mcp' }).catch(() => null)
+  await update($, message, () => (filled?.isFilled ? SIGNIN_READY : SIGNIN_HELP))
 }
+const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select tenantree and choose Authenticate.'
 let lastStatus = 0
 const STATUS_MS = 30_000
 const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate.'
