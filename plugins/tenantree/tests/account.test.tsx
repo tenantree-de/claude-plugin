@@ -40,12 +40,11 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
 
-  // Sign out puts the request into the prompt box; nothing is sent by itself and the band stays signed in.
+  // Sign out calls the server directly; where the Auto permission mode refuses the call, the band says so.
   await band.press({ key: 'signout' } as never)
-  const asked = JSON.stringify(await band.drawn())
-  expect(asked).toMatch(/Press Enter to sign out of tenantree|To sign out, send: Sign me out of tenantree/)
-  expect(asked).toContain('person@example.test')
-  expect(calls).not.toContain(`${P}tenantree_session_delete`)
+  const blocked = JSON.stringify(await band.drawn())
+  expect(blocked).toContain('The Auto permission mode blocks this action')
+  expect(blocked).toContain('person@example.test')
 
   // Signed out in the portal: the next tenantree answer asks for a sign-in.
   await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)

@@ -545,14 +545,27 @@ const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new
  */
 let signOutRequestedAt = 0
 const SIGNOUT_WINDOW_MS = 3 * 60 * 1000
+/** A button's call that Claude Code's Auto permission mode refused (operator, 17.10.2026): the band says so. */
+const AUTO_BLOCKED = 'The Auto permission mode blocks this action. Please switch the permission mode and press the button again.'
+const blockedByAuto = (err: unknown) => /auto mode|classifier|no verdict|permission/i.test(String((err as Error)?.message ?? err))
+
 const LOGIN_CONTEXT =
-  'The person wrote "tenantree login": call tenantree_landscape_query once and answer in one sentence with the signed-in account and the active target. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
+  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one system is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
 const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b/i
 
 async function signOut($: EngineInterface) {
-  const filled = await $.prompt.fill({ text: SIGNOUT_PROMPT }).catch(() => null)
-  await update($, message, () => (filled?.isFilled ? 'Press Enter to sign out of tenantree.' : `To sign out, send: ${SIGNOUT_PROMPT}`))
+  await update($, message, () => 'Signing out …')
+  signOutRequestedAt = await $.clock.now()
+  try {
+    const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out', 'The user pressed the "Sign out" button in the tenantree band and asks to sign this connection out of tenantree.')
+    if (r.isError) throw new Error(r.text ?? textOf(r))
+    await signedOut($)
+    await update($, message, () => null)
+  } catch (err) {
+    signOutRequestedAt = 0
+    await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The sign-out was not carried out.'))
+  }
 }
 
 /**
@@ -947,8 +960,8 @@ export const register: Register = on => {
         await remember($, r.text ?? r)
         await refresh($).catch(() => {})
         await update($, message, () => (r.isError ? 'The subaccount could not be switched.' : null))
-      } catch {
-        await update($, message, () => 'The subaccount could not be switched.')
+      } catch (err) {
+        await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The subaccount could not be switched.'))
       }
     }
     const askSignin = async () => {
@@ -957,8 +970,8 @@ export const register: Register = on => {
         const url = SIGNIN_LINK.exec(r.text ?? textOf(r))?.[0]
         const at = await $.clock.now()
         if (url) await update($, signin, () => ({ url, system: t?.system ?? null, at }))
-      } catch {
-        await update($, message, () => 'The sign-in link could not be created.')
+      } catch (err) {
+        await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The sign-in link could not be created.'))
       }
     }
     const isProduction = t?.kind === 'production'
