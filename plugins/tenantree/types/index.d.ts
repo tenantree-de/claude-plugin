@@ -91,7 +91,6 @@ declare module 'claude-code' {
       attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
       account: AccountState
-      signoutFallback: boolean
       expanded: Record<string, boolean>
       costs: Record<string, CostTile>
       diagrams: Record<string, DiagramTile>

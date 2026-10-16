@@ -516,17 +516,15 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
  * verdict for a sign-out the plugin calls itself, so Sign out opens the connections of the profile in the
  * portal. The band notices the sign-out with the next answer that asks for a sign-in.
  */
-const SIGNOUT_URL = `${PORTAL}/clients/connections`
 const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new )?(?:sign-in|authentication)/i
 
 /** Set while the Sign out button runs: the guard lets this call through, never the model's own. */
 let signingOut = false
-const signoutFallback = atom({ plugin: 'tenantree', key: 'signoutFallback' } as const, false)
 
 /**
  * Sign out (operator, 17.10.2026): the band asks the server to end this connection, through Claude Code's
- * own permission path like every other button. Where Claude Code does not let the call through (its auto
- * mode gives no verdict for it), the band offers the portal, where the person signs out instead.
+ * own permission path like every other button. Where Claude Code's auto permission mode blocks it, the band
+ * says so; in the other permission modes Claude Code asks once and the sign-out goes through.
  */
 async function signOut($: EngineInterface) {
   await update($, message, () => 'Signing out …')
@@ -545,13 +543,13 @@ async function signOut($: EngineInterface) {
     await signedOut($)
     await update($, message, () => null)
   } catch {
-    await update($, signoutFallback, () => true)
-    await update($, message, () => 'Claude Code did not allow the sign-out here. Please sign out in the portal.')
+    // Claude Code's auto permission mode gives no verdict for this call (measured 17.10.2026); in the other
+    // modes Claude Code asks once and the sign-out goes through.
+    await update($, message, () => 'The Auto permission mode blocks the sign-out. Please switch the permission mode and press Sign out again.')
   }
 }
 
 async function signedOut($: EngineInterface) {
-  await update($, signoutFallback, () => false)
   await update($, account, (): AccountState => ({ status: 'signedOut' }))
   await update($, target, (): TargetState => ({ status: 'unknown' }))
   await update($, server, () => null)
@@ -857,7 +855,6 @@ export const register: Register = on => {
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
-    const fallback = await read($, signoutFallback)
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
@@ -941,11 +938,7 @@ export const register: Register = on => {
           </Box>
         )}
         {acc.status === 'signedOut' && note ? <Text dimColor>{note}</Text> : null}
-        {fallback && acc.status !== 'signedOut' ? (
-          <Box gap={1} marginTop={1} alignItems="center">
-            <Link href={SIGNOUT_URL} label="Sign out in the portal" />
-          </Box>
-        ) : null}
+
         {signinOpen ? (
           <Box gap={1} marginTop={1} alignItems="center">
             <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>

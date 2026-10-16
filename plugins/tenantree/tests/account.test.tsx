@@ -32,10 +32,10 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
 
-  // Claude Code refuses the button's call (auto mode): the band offers the portal.
+  // Claude Code's auto permission mode refuses the button's call: the band says so and stays signed in.
   await band.press({ key: 'signout' } as never)
   const refused = JSON.stringify(await band.drawn())
-  expect(refused).toContain('https://portal.tenantree.de/clients/connections')
+  expect(refused).toContain('The Auto permission mode blocks the sign-out')
   expect(refused).toContain('person@example.test')
 
   // Signed out in the portal: the next tenantree answer asks for a sign-in.
