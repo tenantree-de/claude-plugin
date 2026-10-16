@@ -961,41 +961,54 @@ export const register: Register = on => {
     // address when it names one, else built from the chosen entry of the picker, else the portal.
     const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
     const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
-    // LAYOUT (operator, 17.10.2026): one row per concern, explicit rows, the same spacing everywhere --
-    // two columns between elements of a row, one line between rows, a little air inside the band.
+    // LAYOUT (operator, 17.10.2026, after his sketch): a header of two rows -- the subaccount left and the
+    // mark right, below it the account left and Sign out right under the mark -- then one row per notice
+    // (IAS sign-in, approvals, errors). Fixed widths for labels and the right column keep everything aligned.
     const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
+    const LABEL = 14
+    const RIGHT = 18
     return (
-      <Box flexDirection="column" gap={1} paddingY={1}>
-        {/* The account on the left, the mark on the right (TEPLU-12). */}
+      <Box flexDirection="column" gap={1} paddingY={1} paddingX={1}>
         <Box {...ROW} justifyContent="space-between">
-          {acc.status === 'signedOut' ? (
-            <Box {...ROW}>
-              <Text color="warning">◆ Not signed in to tenantree</Text>
-              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-            </Box>
-          ) : email ? (
-            <Box flexDirection="column" gap={1}>
-              <Box {...ROW} justifyContent="space-between" gap={4}>
-                <Text dimColor>Signed in as</Text>
-                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+          <Box {...ROW}>
+            {acc.status === 'signedOut' ? (
+              <Text color="warning" bold>◆ Not signed in to tenantree</Text>
+            ) : (
+              <Box {...ROW}>
+                {isProduction ? <Text color="error" bold>● Production</Text> : null}
+                {picker}
               </Box>
-              <Text>{email}</Text>
+            )}
+          </Box>
+          <Box width={RIGHT} justifyContent="flex-end">
+            <Box {...ROW} gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={2}>
+              {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
+              {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
+              <Link href={dashboard} label="tenantree" />
             </Box>
-          ) : (
-            <Text dimColor>Reading the account …</Text>
-          )}
-          <Box {...ROW} gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={2} paddingY={0}>
-            {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
-            {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
-            <Link href={dashboard} label="tenantree" />
           </Box>
         </Box>
-        {acc.status === 'signedOut' ? null : (
+        <Box {...ROW} justifyContent="space-between">
           <Box {...ROW}>
-            {isProduction ? <Text color="error" bold>● Production</Text> : null}
-            {picker}
+            {acc.status === 'signedOut' ? (
+              <Text dimColor>Sign in with /mcp → tenantree → Authenticate, then write: tenantree login</Text>
+            ) : (
+              <Box {...ROW} gap={0}>
+                <Box width={LABEL}>
+                  <Text dimColor>Signed in as</Text>
+                </Box>
+                <Text>{email ?? 'Reading the account …'}</Text>
+              </Box>
+            )}
           </Box>
-        )}
+          <Box width={RIGHT} justifyContent="flex-end">
+            {acc.status === 'signedOut' ? (
+              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+            ) : email ? (
+              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+            ) : null}
+          </Box>
+        </Box>
         {note ? (
           <Box {...ROW}>
             <Text dimColor>{note}</Text>
