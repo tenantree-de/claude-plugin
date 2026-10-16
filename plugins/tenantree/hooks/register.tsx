@@ -901,60 +901,62 @@ export const register: Register = on => {
     // address when it names one, else built from the chosen entry of the picker, else the portal.
     const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
     const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
+    // LAYOUT (operator, 17.10.2026): one row per concern, explicit rows, the same spacing everywhere --
+    // two columns between elements of a row, one line between rows, a little air inside the band.
+    const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
     return (
-      <Box flexDirection="column">
-        {/* TEPLU-12 (operator, 16.10.2026): the account above, the picker below it, the mark on the right. */}
-        <Box justifyContent="space-between" alignItems="center">
-          <Box alignItems="center" gap={1}>
-            {acc.status === 'signedOut' ? (
-              <>
-                <Text color="warning">◆ Not signed in to tenantree</Text>
-                <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-              </>
-            ) : email ? (
-              // Two lines (operator, 17.10.2026): the label with Sign out right-aligned above the e-mail.
-              <Box flexDirection="column">
-                <Box justifyContent="space-between" alignItems="center" gap={2}>
-                  <Text dimColor>Signed in as</Text>
-                  <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-                </Box>
-                <Text>{email}</Text>
+      <Box flexDirection="column" gap={1} paddingY={1}>
+        {/* The account on the left, the mark on the right (TEPLU-12). */}
+        <Box {...ROW} justifyContent="space-between">
+          {acc.status === 'signedOut' ? (
+            <Box {...ROW}>
+              <Text color="warning">◆ Not signed in to tenantree</Text>
+              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+            </Box>
+          ) : email ? (
+            <Box flexDirection="column" gap={1}>
+              <Box {...ROW} justifyContent="space-between" gap={4}>
+                <Text dimColor>Signed in as</Text>
+                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
               </Box>
-            ) : (
-              <Text dimColor>Reading the account …</Text>
-            )}
-          </Box>
-          <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
+              <Text>{email}</Text>
+            </Box>
+          ) : (
+            <Text dimColor>Reading the account …</Text>
+          )}
+          <Box {...ROW} gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={2} paddingY={0}>
             {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
             {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
             <Link href={dashboard} label="tenantree" />
           </Box>
         </Box>
         {acc.status === 'signedOut' ? null : (
-          <Box alignItems="center" gap={1} marginTop={1}>
+          <Box {...ROW}>
             {isProduction ? <Text color="error" bold>● Production</Text> : null}
             {picker}
-            {note ? <Text dimColor>{note}</Text> : null}
           </Box>
         )}
-        {acc.status === 'signedOut' && note ? <Text dimColor>{note}</Text> : null}
-
+        {note ? (
+          <Box {...ROW}>
+            <Text dimColor>{note}</Text>
+          </Box>
+        ) : null}
         {signinOpen ? (
-          <Box gap={1} marginTop={1} alignItems="center">
+          <Box {...ROW}>
             <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
             <Link href={signinOpen.url} label="Sign in" />
             <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
           </Box>
         ) : notAdmitted ? (
-          <Box gap={1} marginTop={1} alignItems="center">
+          <Box {...ROW}>
             <Text color="warning">◆ Not signed in at the IAS of {t.system}.</Text>
             <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
           </Box>
         ) : null}
         {open.length ? (
-          <Box flexDirection="column" marginTop={1}>
+          <Box flexDirection="column" gap={1}>
             {open.map(([id, p]) => (
-              <Box key={id} gap={1} alignItems="center">
+              <Box key={id} {...ROW}>
                 <Text color="warning">◆ Approval pending:</Text>
                 <Text bold>{p.title}</Text>
                 <Text dimColor>until {time(p.expiresAt)}</Text>
