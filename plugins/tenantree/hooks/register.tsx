@@ -399,7 +399,7 @@ async function serverOf($: EngineInterface): Promise<string | null> {
     // The server asks for a sign-in: the band offers it (TEPLU-12).
     if (connected.reason === 'auth') {
       await update($, account, (): AccountState => ({ status: 'signedOut' }))
-      watchSignIn($)
+      void watchSignIn($)
     }
     return null
   }
@@ -546,26 +546,36 @@ async function signOut($: EngineInterface) {
  * every 5 seconds whether the tenantree connection is back (no tool call); once it is, it reads the profile.
  */
 let watching: { cancel: () => void } | null = null
-function watchSignIn($: EngineInterface) {
-  if (watching) return
-  watching = $.clock.every(5000, () =>
-    void (async () => {
-      if ((await read($, account)).status !== 'signedOut') {
-        watching?.cancel()
-        watching = null
-        return
-      }
-      const c = await $.mcp.connect('tenantree').catch(() => null)
-      if (!c?.isConnected) return
-      await update($, server, () => c.server)
-      await refresh($).catch(() => {})
-      if ((await read($, account)).status === 'signedIn') await update($, message, () => null)
-    })().catch(() => {}),
-  )
+let lastWatch = 0
+const WATCH_MS = 3000
+
+async function checkSignIn($: EngineInterface) {
+  lastWatch = await $.clock.now()
+  if ((await read($, account)).status !== 'signedOut') {
+    watching?.cancel()
+    watching = null
+    return
+  }
+  const c = await $.mcp.connect('tenantree').catch(() => null)
+  if (!c?.isConnected) return
+  await update($, server, () => c.server)
+  await refresh($).catch(() => {})
+}
+
+/**
+ * Started whenever the band shows "Not signed in" (also after a reload of the plugin, which ends timers), and
+ * started anew when Claude Code let a period pass without a tick.
+ */
+async function watchSignIn($: EngineInterface) {
+  const now = await $.clock.now()
+  if (watching && now - lastWatch < 2 * WATCH_MS) return
+  watching?.cancel()
+  lastWatch = now
+  watching = $.clock.every(WATCH_MS, () => void checkSignIn($).catch(() => {}))
 }
 
 async function signedOut($: EngineInterface) {
-  watchSignIn($)
+  void watchSignIn($)
   await update($, account, (): AccountState => ({ status: 'signedOut' }))
   await update($, target, (): TargetState => ({ status: 'unknown' }))
   await update($, server, () => null)
@@ -897,6 +907,7 @@ export const register: Register = on => {
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
+    if (acc.status === 'signedOut') void watchSignIn($).catch(() => {})
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
