@@ -33,6 +33,9 @@ const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f
 const HANDOVER_LINK = /https:\/\/[^\s"<>\\]+\/secret\/[A-Za-z0-9_-]+/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
+/** The last line of every tenantree answer names the active target (server, 16.10.2026). */
+const TARGET_LINE = /tenantree target: (.+?) → (.+?) → (.+?) \((production|quality|development|other)\)\s*$/m
+const STORE_KEY = 'lastTarget'
 const PLAN_MS = 15 * 60 * 1000
 const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
 const LEVEL: Record<string, string> = { structure: 'Structure', landscape: 'Landscape', account: 'Account' }
@@ -127,7 +130,22 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
 
 async function remember($: EngineInterface, result: unknown) {
   const found = fieldOf(result, 'activeTarget') as ActiveTarget | null | undefined
-  if (found === undefined) return
+  if (found === undefined) {
+    // An SAP tool's answer names the target in its last line: enough for the band, without a call.
+    const m = TARGET_LINE.exec(textOf(result))
+    if (!m) return
+    const [, organization = '', landscape = '', system = '', kind = 'other'] = m
+    const at = await $.clock.now()
+    await update($, target, (prev): TargetState => {
+      const before = prev.status === 'known' ? prev : undefined
+      const same = before?.target && before.target.organization === organization && before.target.landscape === landscape && before.target.system === system
+      // The line comes only with an answer that went through: the person is admitted there.
+      if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true } } : before
+      return { status: 'known', target: { organization, landscape, system, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: before?.targets, at }
+    })
+    await keep($)
+    return
+  }
   const account = fieldOf(result, 'signedInAs') as string | undefined
   const targets = fieldOf(result, 'targets') as Target[] | undefined
   const at = await $.clock.now()
@@ -135,6 +153,13 @@ async function remember($: EngineInterface, result: unknown) {
     const before = prev.status === 'known' ? prev : undefined
     return { status: 'known', target: found, account: account ?? before?.account, targets: targets ?? before?.targets, at }
   })
+  await keep($)
+}
+
+/** The target outlives the session (it lives per person on the server anyway): the band stands at once. */
+async function keep($: EngineInterface) {
+  const now = await read($, target)
+  if (now.status === 'known') await $.store.set(STORE_KEY, now).catch(() => {})
 }
 
 async function serverOf($: EngineInterface): Promise<string | null> {
@@ -236,6 +261,8 @@ const normal = (s: string) => s.replace(/\s+/g, ' ').trim()
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
+    const last = (await $.store.get(STORE_KEY).catch(() => null)) as TargetState | null
+    if (last && last.status === 'known') await update($, target, prev => (prev.status === 'unknown' ? last : prev)).catch(() => {})
     await $.command.register({ name: 'tenantree', description: 'Show the tenantree account and the organizations, landscapes and subaccounts available to it' })
     void refresh($).catch(() => {})
     return result
