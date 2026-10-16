@@ -32,6 +32,7 @@ const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { u
 const account = atom({ plugin: 'tenantree', key: 'account' } as const, { status: 'unknown' } as AccountState)
 
 const PREFIX = 'mcp__plugin_tenantree_tenantree__'
+const PORTAL = 'https://portal.tenantree.de'
 const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
 const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
 const HANDOVER_LINK = /https:\/\/[^\s"<>\\]+\/secret\/[A-Za-z0-9_-]+/
@@ -858,6 +859,9 @@ export const register: Register = on => {
         <Text bold>{t ? path(t) : 'No subaccount chosen'}</Text>
       )
     const notAdmitted = state.status === 'known' && t && (!t.signedIn || t.right === 'none')
+    // The mark always opens the Tenantree Dashboard of the chosen subaccount (operator, 17.10.2026); the server's
+    // address when it names one, else built from the chosen entry of the picker, else the portal.
+    const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
     const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
     return (
       <Box flexDirection="column">
@@ -885,7 +889,7 @@ export const register: Register = on => {
           <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
             {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
             {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
-            {t?.dashboardUrl ? <Link href={t.dashboardUrl} label="tenantree" /> : <Text color="#c9ced4" bold>tenantree</Text>}
+            <Link href={dashboard} label="tenantree" />
           </Box>
         </Box>
         {acc.status === 'signedOut' ? null : (
