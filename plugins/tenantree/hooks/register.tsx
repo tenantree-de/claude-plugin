@@ -546,7 +546,7 @@ const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new
 let signOutRequestedAt = 0
 const SIGNOUT_WINDOW_MS = 3 * 60 * 1000
 const LOGIN_CONTEXT =
-  'The person wrote "tenantree login": call tenantree_profile_read once and answer in one sentence with the signed-in account. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
+  'The person wrote "tenantree login": call tenantree_landscape_query once and answer in one sentence with the signed-in account and the active target. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
 const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b/i
 

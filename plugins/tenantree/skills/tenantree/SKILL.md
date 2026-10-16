@@ -24,5 +24,5 @@ tenantree connects you to the SAP BTP landscapes the person is assigned to in th
 
 ## Account commands in the chat
 
-- "tenantree login": call `tenantree_profile_read` once and answer in one sentence with the signed-in account. The call connects tenantree and updates the tenantree band. If the tenantree tools are not available, tell the person to run `/mcp`, select `tenantree` and choose Authenticate, then to write "tenantree login" again.
+- "tenantree login": call `tenantree_landscape_query` once and answer in one sentence with the signed-in account and the active target. The call connects tenantree and updates the tenantree band. If the tenantree tools are not available, tell the person to run `/mcp`, select `tenantree` and choose Authenticate, then to write "tenantree login" again.
 - "tenantree logout" or "Sign me out of tenantree": call `tenantree_session_delete` once and confirm in one sentence.
