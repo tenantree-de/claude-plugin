@@ -15,6 +15,7 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   on('mcp.connect', async () => ({ value: { isConnected: false, reason: 'auth', message: 'Needs sign-in.' } }) as never)
   on('tool.call', async (_$, e) => {
     calls.push(String(e.tool))
+    if (e.tool === `${P}tenantree_session_delete`) return { deny: 'The server-side auto mode classifier gave no verdict.' } as never
     if (e.tool === `${P}tenantree_landscape_query`) return { ref: 1, result: [{ type: 'text', text: 'Sign-in required.' }], text: 'Sign-in required.', isError: true } as never
     return { ref: 1, result: [{ type: 'text', text: PROFILE }], text: PROFILE } as never
   })
@@ -30,7 +31,12 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   expect(String(denied.deny)).toContain('Sign out')
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
-  expect(before).toContain('https://portal.tenantree.de/clients/connections')
+
+  // Claude Code refuses the button's call (auto mode): the band offers the portal.
+  await band.press({ key: 'signout' } as never)
+  const refused = JSON.stringify(await band.drawn())
+  expect(refused).toContain('https://portal.tenantree.de/clients/connections')
+  expect(refused).toContain('person@example.test')
 
   // Signed out in the portal: the next tenantree answer asks for a sign-in.
   await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)

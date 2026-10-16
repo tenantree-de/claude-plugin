@@ -519,7 +519,39 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
 const SIGNOUT_URL = `${PORTAL}/clients/connections`
 const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new )?(?:sign-in|authentication)/i
 
+/** Set while the Sign out button runs: the guard lets this call through, never the model's own. */
+let signingOut = false
+const signoutFallback = atom({ plugin: 'tenantree', key: 'signoutFallback' } as const, false)
+
+/**
+ * Sign out (operator, 17.10.2026): the band asks the server to end this connection, through Claude Code's
+ * own permission path like every other button. Where Claude Code does not let the call through (its auto
+ * mode gives no verdict for it), the band offers the portal, where the person signs out instead.
+ */
+async function signOut($: EngineInterface) {
+  await update($, message, () => 'Signing out …')
+  signingOut = true
+  try {
+    const r = await pressed(
+      $,
+      'tenantree_session_delete',
+      {},
+      'Sign out',
+      'The user pressed the "Sign out" button in the tenantree band and asks to sign this connection out of tenantree. Signing out revokes the tenantree tokens of this connection; nothing in SAP BTP is changed.',
+    ).finally(() => {
+      signingOut = false
+    })
+    if (r.isError) throw new Error(r.text ?? textOf(r))
+    await signedOut($)
+    await update($, message, () => null)
+  } catch {
+    await update($, signoutFallback, () => true)
+    await update($, message, () => 'Claude Code did not allow the sign-out here. Please sign out in the portal.')
+  }
+}
+
 async function signedOut($: EngineInterface) {
+  await update($, signoutFallback, () => false)
   await update($, account, (): AccountState => ({ status: 'signedOut' }))
   await update($, target, (): TargetState => ({ status: 'unknown' }))
   await update($, server, () => null)
@@ -538,6 +570,8 @@ async function signIn($: EngineInterface) {
   const now = await read($, account)
   await update($, message, () => (now.status === 'signedIn' ? null : SIGNIN_HELP))
 }
+let lastStatus = 0
+const STATUS_MS = 30_000
 const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate.'
 
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
@@ -570,19 +604,23 @@ export const register: Register = on => {
     return result
   })
 
+  // THE STATUS ON EVERY INPUT (operator, 17.10.2026): one read-only call tells whether this connection is
+  // signed in and as whom; the band offers Sign out or Sign in accordingly. At most every 30 seconds.
   on('prompt.submit', async ($, e, next) => {
     await update($, turn, () => []).catch(() => {})
-    const now = await read($, target).catch(() => null)
-    const waiting = await read($, signin).catch(() => null)
-    if (now?.status === 'unknown' || waiting || (now?.status === 'known' && now.target?.right === 'none')) void refresh($).catch(() => {})
+    const at = await $.clock.now()
+    if (at - lastStatus > STATUS_MS) {
+      lastStatus = at
+      void refresh($).catch(() => {})
+    }
     return next(e)
   })
 
   // Only the Sign out button signs the connection out (TEN-537): never the model on its own.
   // Signing out is the person's own step in the portal (TEN-537): never the model's.
-  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async () => ({
-    deny: 'Signing out is done by the person: Sign out in the tenantree band opens the connections in the portal.',
-  }))
+  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) =>
+    signingOut ? next(e) : { deny: 'Signing out is done by the person with the Sign out button of the tenantree band.' },
+  )
 
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
@@ -819,6 +857,7 @@ export const register: Register = on => {
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
+    const fallback = await read($, signoutFallback)
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
@@ -880,7 +919,7 @@ export const register: Register = on => {
               <Box flexDirection="column">
                 <Box justifyContent="space-between" alignItems="center" gap={2}>
                   <Text dimColor>Signed in as</Text>
-                  <Link href={SIGNOUT_URL} label="Sign out" />
+                  <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
                 </Box>
                 <Text>{email}</Text>
               </Box>
@@ -902,6 +941,11 @@ export const register: Register = on => {
           </Box>
         )}
         {acc.status === 'signedOut' && note ? <Text dimColor>{note}</Text> : null}
+        {fallback && acc.status !== 'signedOut' ? (
+          <Box gap={1} marginTop={1} alignItems="center">
+            <Link href={SIGNOUT_URL} label="Sign out in the portal" />
+          </Box>
+        ) : null}
         {signinOpen ? (
           <Box gap={1} marginTop={1} alignItems="center">
             <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
