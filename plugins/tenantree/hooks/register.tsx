@@ -516,7 +516,7 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
  * verdict for a sign-out the plugin calls itself, so Sign out opens the connections of the profile in the
  * portal. The band notices the sign-out with the next answer that asks for a sign-in.
  */
-const SIGNOUT_URL = `${PORTAL}/security#connections`
+const SIGNOUT_URL = `${PORTAL}/clients/connections`
 const NEEDS_SIGNIN = /Sign-in required|\b401\b|Unauthorized|needs? (?:a )?(?:new )?(?:sign-in|authentication)/i
 
 async function signedOut($: EngineInterface) {

@@ -30,7 +30,7 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   expect(String(denied.deny)).toContain('Sign out')
   expect(calls).not.toContain(`${P}tenantree_session_delete`)
 
-  expect(before).toContain('https://portal.tenantree.de/security#connections')
+  expect(before).toContain('https://portal.tenantree.de/clients/connections')
 
   // Signed out in the portal: the next tenantree answer asks for a sign-in.
   await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
