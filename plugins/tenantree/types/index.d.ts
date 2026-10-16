@@ -26,6 +26,12 @@ export type TargetState =
   | { status: 'unknown' }
   | { status: 'known'; target: ActiveTarget | null; account?: string; targets?: Target[]; at: number }
 
+/** TEPLU-12: the tenantree account of this connection. */
+export type AccountState =
+  | { status: 'unknown' }
+  | { status: 'signedIn'; email: string; organizations: Array<{ name: string; role: 'admin' | 'user' }> }
+  | { status: 'signedOut' }
+
 /** One row of a plan: a label and its value. */
 export type Row = { label: string; value: string }
 
@@ -84,6 +90,7 @@ declare module 'claude-code' {
       turn: string[]
       attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
+      account: AccountState
       expanded: Record<string, boolean>
       costs: Record<string, CostTile>
       diagrams: Record<string, DiagramTile>

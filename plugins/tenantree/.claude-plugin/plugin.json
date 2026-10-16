@@ -1,6 +1,6 @@
 {
   "name": "tenantree",
-  "version": "0.7.9",
+  "version": "0.8.0",
   "description": "Connects Claude Code to tenantree: administration of SAP BTP landscapes with approval and audit. Shows the active target (organization, landscape, subaccount) permanently above the prompt and switches it.",
   "author": {
     "name": "Sandner Consulting",

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ActiveTarget, Attached, CostSection, CostTile, DiagramTile, PlanTile, Row, Target, TargetState } from '../types'
+import type { AccountState, ActiveTarget, Attached, CostSection, CostTile, DiagramTile, PlanTile, Row, Target, TargetState } from '../types'
 
 /**
  * tenantree in Claude Code (operator, 15./16.10.2026):
@@ -28,6 +28,8 @@ const diagrams = atom({ plugin: 'tenantree', key: 'diagrams' } as const, {} as R
 const costs = atom({ plugin: 'tenantree', key: 'costs' } as const, {} as Record<string, CostTile>)
 const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
+/** TEPLU-12: the tenantree account of this connection; signedOut after Sign out or when the server asks for a sign-in. */
+const account = atom({ plugin: 'tenantree', key: 'account' } as const, { status: 'unknown' } as AccountState)
 
 const PREFIX = 'mcp__plugin_tenantree_tenantree__'
 const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
@@ -366,12 +368,14 @@ async function remember($: EngineInterface, result: unknown) {
     await keep($)
     return
   }
-  const account = fieldOf(result, 'signedInAs') as string | undefined
+  const signedInAs = fieldOf(result, 'signedInAs') as string | undefined
+  const organizations = fieldOf(result, 'organizations') as Array<{ name: string; role: 'admin' | 'user' }> | undefined
+  if (signedInAs) await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, organizations: organizations ?? [] }))
   const targets = fieldOf(result, 'targets') as Target[] | undefined
   const at = await $.clock.now()
   await update($, target, (prev): TargetState => {
     const before = prev.status === 'known' ? prev : undefined
-    return { status: 'known', target: found, account: account ?? before?.account, targets: targets ?? (found ? withActive(before?.targets, found) : before?.targets), at }
+    return { status: 'known', target: found, account: signedInAs ?? before?.account, targets: targets ?? (found ? withActive(before?.targets, found) : before?.targets), at }
   })
   await keep($)
 }
@@ -386,7 +390,11 @@ async function serverOf($: EngineInterface): Promise<string | null> {
   const known = await read($, server)
   if (known) return known
   const connected = await $.mcp.connect('tenantree')
-  if (!connected.isConnected) return null
+  if (!connected.isConnected) {
+    // The server asks for a sign-in: the band offers it (TEPLU-12).
+    if (connected.reason === 'auth') await update($, account, (): AccountState => ({ status: 'signedOut' }))
+    return null
+  }
   await update($, server, () => connected.server)
   return connected.server
 }
@@ -501,6 +509,36 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
   }
 }
 
+/** THE PERSON SIGNS OUT (TEPLU-12, TEN-537): the server revokes every token of this connection. */
+async function signOut($: EngineInterface) {
+  await update($, message, () => 'Signing out …')
+  try {
+    const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out')
+    if (r.isError) throw new Error(r.text ?? textOf(r))
+    await update($, account, (): AccountState => ({ status: 'signedOut' }))
+    await update($, target, (): TargetState => ({ status: 'unknown' }))
+    await update($, server, () => null)
+    await update($, signin, () => null)
+    await $.store.set(STORE_KEY, null).catch(() => {})
+    await update($, message, () => null)
+  } catch {
+    await update($, message, () => 'Sign-out failed. Please try again.')
+  }
+}
+
+/** THE PERSON SIGNS IN: Claude Code holds the OAuth sign-in; connecting starts it where the host can. */
+async function signIn($: EngineInterface) {
+  await update($, message, () => 'Connecting to tenantree …')
+  const connected = await $.mcp.connect('tenantree').catch(() => null)
+  if (connected?.isConnected) {
+    await update($, server, () => connected.server)
+    await refresh($).catch(() => {})
+  }
+  const now = await read($, account)
+  await update($, message, () => (now.status === 'signedIn' ? null : SIGNIN_HELP))
+}
+const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate.'
+
 const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
 /**
  * TEN-375 / TEPLU-6: SAP BTP time (UTC) and the person's time zone from the profile (the server
@@ -536,6 +574,14 @@ export const register: Register = on => {
     const now = await read($, target).catch(() => null)
     const waiting = await read($, signin).catch(() => null)
     if (now?.status === 'unknown' || waiting || (now?.status === 'known' && now.target?.right === 'none')) void refresh($).catch(() => {})
+    return next(e)
+  })
+
+  // Only the Sign out button signs the connection out (TEN-537): never the model on its own.
+  on('tool.call', { tool: `${PREFIX}tenantree_session_delete` }, async ($, e, next) => {
+    if (!String((e as { consent?: unknown }).consent ?? '').includes('in the tenantree band')) {
+      return { deny: 'Signing out is done by the person with the Sign out button of the tenantree band.' }
+    }
     return next(e)
   })
 
@@ -610,8 +656,12 @@ export const register: Register = on => {
   on('command.run', { command: 'tenantree' }, async $ => {
     await refresh($).catch(() => {})
     const state = await read($, target)
+    const acc = await read($, account)
+    if (acc.status === 'signedOut') return { text: `Not signed in to tenantree. ${SIGNIN_HELP}` }
     if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server tenantree and sign in.' }
-    const lines = [`Signed in to tenantree as ${state.account ?? 'unknown'}.`, '', 'Available subaccounts:']
+    const lines = [`Signed in to tenantree as ${state.account ?? 'unknown'}.`]
+    if (acc.status === 'signedIn' && acc.organizations.length) lines.push('', 'Organizations:', ...acc.organizations.map(o => `  ${o.name} (${o.role === 'admin' ? 'administrator' : 'user'})`))
+    lines.push('', 'Available subaccounts:')
     for (const t of state.targets ?? []) lines.push(`${t.active ? '▶' : ' '} ${path(t)} (${KIND[t.kind]})`)
     if (!state.targets?.length) lines.push('  none assigned')
     return { text: lines.join('\n') }
@@ -765,7 +815,8 @@ export const register: Register = on => {
     const open = Object.entries(all).filter(([, p]) => p.status === 'open' && now <= p.expiresAt)
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
-    if (state.status === 'unknown' && !open.length && !signinOpen) return next(e)
+    const acc = await read($, account)
+    if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
     // The picker and the mark where the surface draws them (terminal: no Svg; mobile: no Select).
@@ -799,7 +850,9 @@ export const register: Register = on => {
     }
     const isProduction = t?.kind === 'production'
     const picker =
-      state.status === 'unknown' ? (
+      acc.status === 'signedOut' ? (
+        <Text color="warning">◆ Not signed in to tenantree</Text>
+      ) : state.status === 'unknown' ? (
         <Text dimColor>Reading the subaccount …</Text>
       ) : Select && targets.length > 0 ? (
         <Select key="target" options={targets.map(x => ({ value: x.id, label: path(x) }))} value={active?.id} onSelect={(v: string) => void choose(v)} />
@@ -815,10 +868,18 @@ export const register: Register = on => {
             {picker}
             {note ? <Text dimColor>{note}</Text> : null}
           </Box>
+          <Box alignItems="center" gap={1}>
+            {acc.status === 'signedIn' ? <Text dimColor>{acc.email}</Text> : null}
+            {acc.status === 'signedIn' ? (
+              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+            ) : acc.status === 'signedOut' ? (
+              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+            ) : null}
           <Box alignItems="center" gap={1} backgroundColor="#2b3036" borderStyle="round" borderColor="#4a5058" paddingX={1}>
             {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
             {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
             {t?.dashboardUrl ? <Link href={t.dashboardUrl} label="tenantree" /> : <Text color="#c9ced4" bold>tenantree</Text>}
+          </Box>
           </Box>
         </Box>
         {signinOpen ? (
