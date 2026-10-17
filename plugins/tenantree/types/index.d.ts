@@ -90,6 +90,7 @@ declare module 'claude-code' {
       turn: string[]
       attached: Attached[]
       signin: { url: string; system: string | null; at: number } | null
+      logout: { url: string; at: number } | null
       account: AccountState
       expanded: Record<string, boolean>
       costs: Record<string, CostTile>

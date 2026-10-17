@@ -28,6 +28,9 @@ const diagrams = atom({ plugin: 'tenantree', key: 'diagrams' } as const, {} as R
 const costs = atom({ plugin: 'tenantree', key: 'costs' } as const, {} as Record<string, CostTile>)
 const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
 const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
+// After signing out (17.10.2026): the one-time link that ends the IAS session in the browser.
+const logout = atom({ plugin: 'tenantree', key: 'logout' } as const, null as { url: string; at: number } | null)
+const LOGOUT_LINK = /https:\/\/[^\s)]+\/sso\/signout\/[A-Za-z0-9_-]+/
 /** TEPLU-12: the tenantree account of this connection; signedOut after Sign out or when the server asks for a sign-in. */
 const account = atom({ plugin: 'tenantree', key: 'account' } as const, { status: 'unknown' } as AccountState)
 
@@ -375,6 +378,7 @@ async function remember($: EngineInterface, result: unknown) {
   const organizations = fieldOf(result, 'organizations') as Array<{ name: string; role: 'admin' | 'user' }> | undefined
   if (signedInAs) {
     await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, organizations: organizations ?? [] }))
+    await update($, logout, () => null)
     // Signed in (again): a sign-in hint in the band is out of date (operator, 17.10.2026).
     await update($, message, m => (m && SIGNIN_NOTES.some(n => m.startsWith(n)) ? null : m))
   }
@@ -568,6 +572,7 @@ async function signOut($: EngineInterface) {
     const r = await pressed($, 'tenantree_session_delete', {}, 'Sign out', 'The user pressed the "Sign out" button in the tenantree band and asks to sign this connection out of tenantree.')
     if (r.isError) throw new Error(r.text ?? textOf(r))
     await signedOut($)
+    await showLogout($, r.text ?? textOf(r))
     await update($, message, () => null)
   } catch (err) {
     signOutRequestedAt = 0
@@ -611,6 +616,12 @@ async function watchSignIn($: EngineInterface) {
   watching?.cancel()
   lastWatch = now
   watching = $.clock.every(WATCH_MS, () => void checkSignIn($).catch(() => {}))
+}
+
+async function showLogout($: EngineInterface, text: string) {
+  const url = LOGOUT_LINK.exec(text)?.[0]
+  const at = await $.clock.now()
+  await update($, logout, () => (url ? { url, at } : null))
 }
 
 async function signedOut($: EngineInterface) {
@@ -702,7 +713,10 @@ export const register: Register = on => {
     signOutRequestedAt = 0
     const result = await next(e)
     const failed = Boolean((result as { isError?: boolean } | null)?.isError) || 'deny' in (result as object)
-    if (!failed) await signedOut($)
+    if (!failed) {
+      await signedOut($)
+      await showLogout($, textOf(result))
+    }
     await update($, message, () => (failed ? 'The sign-out was not carried out.' : null))
     return result
   })
@@ -951,6 +965,8 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const all = await read($, tiles)
     const open = Object.entries(all).filter(([, p]) => p.status === 'open' && now <= p.expiresAt)
+    const loggedOut = await read($, logout)
+    const logoutOpen = loggedOut && now - loggedOut.at < SIGNIN_MS ? loggedOut : null
     const pending = await read($, signin)
     const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
     const acc = await read($, account)
@@ -1060,6 +1076,13 @@ export const register: Register = on => {
         {note ? (
           <Box {...ROW}>
             <Text dimColor>{note}</Text>
+          </Box>
+        ) : null}
+        {logoutOpen ? (
+          <Box {...ROW}>
+            <Text>Signed out of tenantree. End the IAS session in this browser as well:</Text>
+            <Link href={logoutOpen.url} label="End IAS session" />
+            <Text dimColor>valid until {time(logoutOpen.at + SIGNIN_MS)}, once</Text>
           </Box>
         ) : null}
         {signinOpen ? (
