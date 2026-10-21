@@ -56,6 +56,10 @@ export type PlanTile = {
   error?: string
   /** The approval code from _meta "claude/plugins", where Claude Code hands it over; never shown. */
   code?: string
+  /** The cost notice of a plan with costs or unchecked costs (21.10.2026): approved only together with its confirmation. */
+  cost?: { kind: 'paid' | 'unclear'; text: string } | null
+  /** The person confirmed the cost notice in the tile. */
+  costAck?: boolean
   handover?: string | null
   busy?: 'approve' | 'reject'
 }

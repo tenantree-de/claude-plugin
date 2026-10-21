@@ -32,7 +32,7 @@ test('the plan tile follows the reply and the band lists the open approval, with
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_1', id: 'Tenantree_Demo_iFlow_X' } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', category: null } as never)
-  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('ENGINE')
   expect(tile).toContain('Undeploy Integration Artifact')
@@ -44,7 +44,7 @@ test('the plan tile follows the reply and the band lists the open approval, with
   const open = JSON.stringify(await reply.drawn())
   expect(open).toContain('Tenantree_Demo_iFlow_X')
   expect(open).toContain('Hide plan')
-  const other = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Something else.', isFirstOfReply: true } } as never)
+  const other = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Something else.', isFirstOfReply: true } } as never)
   expect(JSON.stringify(await other.drawn())).not.toContain('Undeploy')
   const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
   const json = JSON.stringify(await band.drawn())
@@ -61,7 +61,7 @@ test('with the plugin channel the tile offers Approve and Reject', async ($, on)
   on('session.messages', async () => ({ value: [{ role: 'assistant', text: '', toolUses: [{ tool_use_id: 'toolu_2', tool: TOOL, input: {}, meta: { 'claude/plugins': { tenantree: { plan: { code: 'c0de' } } } } }] }] }) as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_2', id: 'Tenantree_Demo_iFlow_X' } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer', category: null } as never)
-  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('"Approve"')
   expect(tile).toContain('"Reject"')
@@ -77,7 +77,7 @@ test('the tile learns by itself that its plan was approved on the page', async (
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_3', id: 'Tenantree_Demo_iFlow_X' } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't3', reason: 'answer', category: null } as never)
-  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
   await clock.advance(6000)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('Approved and carried out')
@@ -112,7 +112,7 @@ test('the cost assessment becomes a tile after the reply', async ($, on) => {
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_cost_query', tool_use_id: 'toolu_c' } as never)
   await $.turn.complete?.({ answer: 'Here are the costs.', durationMs: 1, isAborted: false, turnId: 'tc', reason: 'answer', category: null } as never)
-  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Here are the costs.', isFirstOfReply: true } } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Here are the costs.', isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('Cost risk')
   expect(tile).toContain(' days left')
@@ -143,7 +143,7 @@ const DIAGRAM = [
   'Graphical view in the Tenantree Dashboard: https://portal.tenantree.de/t/x/dashboard/#/landscape',
 ].join('\n')
 
-test('the landscape diagram becomes an SVG tile after the reply', async ($, on) => {
+test('in the terminal the landscape diagram becomes a tile with heading and findings after the reply', async ($, on) => {
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
@@ -152,11 +152,11 @@ test('the landscape diagram becomes an SVG tile after the reply', async ($, on) 
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_diagram_read', tool_use_id: 'toolu_d', kind: 'tenant' } as never)
   await $.turn.complete?.({ answer: 'Here is the landscape.', durationMs: 1, isAborted: false, turnId: 'td', reason: 'answer', category: null } as never)
-  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Here is the landscape.', isFirstOfReply: true } } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Here is the landscape.', isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
   expect(tile).toContain('Subaccount bics-labor')
-  expect(tile).toContain('"type":"Svg"')
-  expect(tile).toContain('Integration Suite')
+  // The terminal draws no SVG: the diagram is described in text; the desktop app shows the MCP App view.
+  expect(tile).not.toContain('"type":"Svg"')
   expect(tile).toContain('No findings.')
 })
 
@@ -184,7 +184,7 @@ const TENANT = [
   '  None.',
 ].join('\n')
 
-test('the tenant diagram groups the second layer into blocks with one connection each', async ($, on) => {
+test('in the desktop app the mod draws no diagram tile (the MCP App view is shown)', async ($, on) => {
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
@@ -193,14 +193,9 @@ test('the tenant diagram groups the second layer into blocks with one connection
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_diagram_read', tool_use_id: 'toolu_t', kind: 'tenant' } as never)
   await $.turn.complete?.({ answer: 'The tenant landscape.', durationMs: 1, isAborted: false, turnId: 'tt', reason: 'answer', category: null } as never)
+  // The desktop app shows the MCP App view of the diagram itself: the mod draws no second tile there.
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'The tenant landscape.', isFirstOfReply: true } } as never)
-  const tile = JSON.stringify(await reply.drawn())
-  expect(tile).toContain('SAP subscriptions')
-  expect(tile).toContain('tenantree access')
-  expect(tile).toContain('Other instances')
-  expect(tile).toContain('tenantree_service_manager')
-  expect(tile).toContain('prefers-color-scheme: dark')
-  expect(tile.split('class=\\"edge\\"').length - 1).toBe(3)
+  expect(JSON.stringify(reply)).not.toContain('Subaccount bics-labor')
 })
 
 test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEPLU-6)', async ($, on) => {
@@ -239,4 +234,17 @@ test('a landscape renamed in the portal reaches the picker with the next answer'
   const json = JSON.stringify(await band.drawn())
   expect(json).toContain('BICS BTP')
   expect(json).not.toContain('BICS Labor')
+})
+
+test('in the desktop app the plan tile is drawn, because the view of a plugin server cannot decide (K13a)', async ($, on) => {
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_9', id: 'Tenantree_Demo_iFlow_X' } as never)
+  await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't9', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  expect(JSON.stringify(await reply.drawn())).toContain('Undeploy Integration Artifact')
 })

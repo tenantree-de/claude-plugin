@@ -10,9 +10,11 @@ import type { AccountState, ActiveTarget, Attached, CostSection, CostTile, Diagr
  * picker to switch it, the sign-in at the IAS and the open approvals; the tenantree mark sits on
  * the right.
  *
- * THE TILES come AFTER the reply, never in the middle of it: Claude Code draws no MCP Apps views
- * for a plugin's server and folds tool calls away, so the mod draws each plan as a tile under the
- * text of the reply that made it.
+ * THE TILES come AFTER the reply, never in the middle of it -- IN THE TERMINAL ONLY. Since about
+ * 21.10.2026 the Claude desktop app (and VS Code) draws the MCP Apps views of a plugin's server again,
+ * inline at the tool call (observed 21.10.2026 for tenantree_cost_query and a plan preview, Claude
+ * Code 2.1.296; not documented by Anthropic). There the original views are shown and the mod draws
+ * nothing twice. The terminal cannot draw them, so there the mod keeps drawing its tiles.
  *
  * NO CALLS OF ITS OWN IN THE BACKGROUND: auto mode refuses a plugin's calls nobody asked for
  * (measured 16.10.2026). The tiles read the plan from the text of the tool answer; the plugin calls
@@ -85,7 +87,43 @@ function fieldOf(value: unknown, name: string, depth = 0): unknown {
 // --- The plan text ----------------------------------------------------------
 
 const FACT = /^([A-Z][A-Za-z ()/-]{1,28}):\s+(\S.*)$/
-const FOR_THE_MODEL = /^(Repeat the same call|APPROVAL REQUIRED|On this installation|Approval page|Give the person|Do not call again)/
+const FOR_THE_MODEL = /^(Repeat the same call|APPROVAL REQUIRED|On this installation|Approval page|Give the person|Do not call again|COST CONFIRMATION)/
+// THE COST NOTICE (operator, 21.10.2026): the marker of a plan with costs or unchecked costs, and the head of its statement.
+const COST_MARK = /^Cost confirmation required \((paid|unclear)\):/
+const COST_HEAD = /^(Cost \(cost calculator\):|Cost:|Cost of |Cost afterwards|Cost while running|Afterwards:|From then on)/
+const COST_TEXT = {
+  title: 'Cost notice',
+  lead: {
+    paid: 'This plan can incur costs. Please review the cost assessment before you approve it.',
+    unclear: 'The costs of this plan have not been checked. tenantree cannot rule out that costs arise.',
+  },
+  confirm: {
+    paid: 'I have read the cost notice and confirm that costs may arise.',
+    unclear: 'I have read the cost notice and confirm that the costs have not been checked and may arise.',
+  },
+  required: 'Approval is possible only after you have confirmed the cost notice.',
+} as const
+
+/** The cost notice of a plan text: its kind (unclear wins) and the statements above its markers. */
+function costOfPlan(text: string): PlanTile['cost'] {
+  const lines = text.split('\n')
+  let kind: 'paid' | 'unclear' | null = null
+  const parts: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const m = COST_MARK.exec((lines[i] ?? '').trim())
+    if (!m) continue
+    kind = kind === 'unclear' || m[1] === 'unclear' ? 'unclear' : 'paid'
+    const block: string[] = []
+    for (let j = i - 1; j >= 0; j--) {
+      const t = (lines[j] ?? '').trim()
+      if (!t || /^Plan:/.test(t) || /^Step \d+:/.test(t) || COST_MARK.test(t)) break
+      block.unshift(t)
+    }
+    const head = block.findIndex(l => COST_HEAD.test(l))
+    parts.push((head >= 0 ? block.slice(head) : block.filter(l => /EUR|cost/i.test(l))).join('\n'))
+  }
+  return kind ? { kind, text: parts.filter(Boolean).join('\n\n') } : null
+}
 const LEFT_OUT = new Set(['Plan', 'Tool', 'Enabled because'])
 
 /** The plan as its text states it: what the tile shows. */
@@ -100,7 +138,7 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
   let headline = ''
   for (let i = 0; i < lines.length; i++) {
     const t = (lines[i] ?? '').trim()
-    if (!t || FOR_THE_MODEL.test(t)) continue
+    if (!t || FOR_THE_MODEL.test(t) || COST_MARK.test(t)) continue
     if (!headline) {
       headline = t
       continue
@@ -131,7 +169,7 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
       else if (!LEFT_OUT.has(fact[1])) facts.push({ label: fact[1], value: fact[2] })
     }
   }
-  return { title: title || 'Plan', level, target, headline, facts, values, warnings }
+  return { title: title || 'Plan', level, target, headline, facts, values, warnings, cost: costOfPlan(text) }
 }
 
 // --- The cost text -----------------------------------------------------------
@@ -516,7 +554,14 @@ async function decide($: EngineInterface, id: string, decision: 'approve' | 'rej
   if (!tile?.code) return
   await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: decision } }))
   try {
-    const r = await pressed($, 'tenantree_plan_decide', { planId: tile.planId, code: tile.code, decision }, decision === 'approve' ? 'Approve' : 'Reject')
+    // A plan with costs is approved only with the confirmed cost notice; the server checks it again (21.10.2026).
+    if (decision === 'approve' && tile.cost && !tile.costAck) {
+      await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: undefined } }))
+      return
+    }
+    const args: Record<string, unknown> = { planId: tile.planId, code: tile.code, decision }
+    if (decision === 'approve' && tile.cost && tile.costAck) args.costConfirmed = true
+    const r = await pressed($, 'tenantree_plan_decide', args, decision === 'approve' ? 'Approve' : 'Reject')
     const body = r.text ?? textOf(r)
     const at = await $.clock.now()
     const closed = Boolean(r.isError) && /no longer open/.test(body)
@@ -821,14 +866,18 @@ export const register: Register = on => {
 
   // THE TILES AFTER THE REPLY (operator, 16.10.2026).
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    // Surfaces that draw the MCP Apps views themselves get no second cost or diagram tile. The PLAN tile stays
+    // there (operator, 21.10.2026, K13a): the desktop app lets the view of a plugin server call no tool, so the
+    // Approve button of the view cannot decide -- this tile can.
+    const viewsDrawn = e.surface !== 'terminal'
     const list = await read($, attached)
     if (!list.length) return next(e)
     const text = normal(e.props.text)
     const hit = list.find(a => a.tail && text.endsWith(a.tail))
     if (!hit) return next(e)
     const all = await read($, tiles)
-    const allCosts = await read($, costs)
-    const allDiagrams = await read($, diagrams)
+    const allCosts = viewsDrawn ? {} : await read($, costs)
+    const allDiagrams = viewsDrawn ? {} : await read($, diagrams)
     const shownDiagrams = hit.ids.map(id => [id, allDiagrams[id]] as const).filter((x): x is readonly [string, DiagramTile] => Boolean(x[1]))
     const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
     const shownCosts = hit.ids.map(id => [id, allCosts[id]] as const).filter((x): x is readonly [string, CostTile] => Boolean(x[1]))
@@ -922,7 +971,28 @@ export const register: Register = on => {
                 {p.level ? <Text dimColor>Write level: {LEVEL[p.level] ?? p.level}</Text> : null}
               </Box>
               {p.target ? <Text dimColor>Target: {p.target}</Text> : null}
-              {open && p.code ? (
+              {p.cost && (open || p.status === 'checking') ? (
+                <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="warning" paddingX={1}>
+                  <Text color="warning" bold>{COST_TEXT.title}</Text>
+                  <Text>{COST_TEXT.lead[p.cost.kind]}</Text>
+                  {p.cost.text ? <Text dimColor>{p.cost.text}</Text> : null}
+                  {p.code ? (
+                    <Box marginTop={1}>
+                      <Button
+                        key={`cost-${id}`}
+                        label={`${p.costAck ? '☑' : '☐'} ${COST_TEXT.confirm[p.cost.kind]}`}
+                        onPress={() => void update($, tiles, all => { const cur = all[id]; return cur ? { ...all, [id]: { ...cur, costAck: !cur.costAck } } : all })}
+                      />
+                    </Box>
+                  ) : null}
+                </Box>
+              ) : null}
+              {open && p.code && p.cost && !p.costAck ? (
+                <Box marginTop={1} gap={2} alignItems="center">
+                  <Button key={`reject-${id}`} label={p.busy === 'reject' ? 'Rejecting …' : 'Reject'} onPress={() => void (p.busy ? null : decide($, id, 'reject'))} />
+                  <Text dimColor>{COST_TEXT.required}</Text>
+                </Box>
+              ) : open && p.code ? (
                 <Box marginTop={1} gap={2} alignItems="center">
                   <Button key={`approve-${id}`} label={p.busy === 'approve' ? 'Carrying out …' : 'Approve'} variant="primary" onPress={() => void (p.busy ? null : decide($, id, 'approve'))} />
                   <Button key={`reject-${id}`} label={p.busy === 'reject' ? 'Rejecting …' : 'Reject'} onPress={() => void (p.busy ? null : decide($, id, 'reject'))} />
