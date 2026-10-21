@@ -184,7 +184,7 @@ const TENANT = [
   '  None.',
 ].join('\n')
 
-test('in the desktop app the mod draws no diagram tile (the MCP App view is shown)', async ($, on) => {
+test('in the desktop app the mod draws the diagram tile (no MCP App views any more)', async ($, on) => {
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
@@ -193,9 +193,9 @@ test('in the desktop app the mod draws no diagram tile (the MCP App view is show
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: 'mcp__plugin_tenantree_tenantree__tenantree_diagram_read', tool_use_id: 'toolu_t', kind: 'tenant' } as never)
   await $.turn.complete?.({ answer: 'The tenant landscape.', durationMs: 1, isAborted: false, turnId: 'tt', reason: 'answer', category: null } as never)
-  // The desktop app shows the MCP App view of the diagram itself: the mod draws no second tile there.
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'The tenant landscape.', isFirstOfReply: true } } as never)
-  expect(JSON.stringify(reply)).not.toContain('Subaccount bics-labor')
+  expect(JSON.stringify(await reply.drawn())).toContain('ENGINE')
+  expect(JSON.stringify(await reply.drawn())).toContain('Subaccount bics-labor')
 })
 
 test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEPLU-6)', async ($, on) => {

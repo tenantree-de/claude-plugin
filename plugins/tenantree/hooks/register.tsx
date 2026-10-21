@@ -866,18 +866,16 @@ export const register: Register = on => {
 
   // THE TILES AFTER THE REPLY (operator, 16.10.2026).
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    // Surfaces that draw the MCP Apps views themselves get no second cost or diagram tile. The PLAN tile stays
-    // there (operator, 21.10.2026, K13a): the desktop app lets the view of a plugin server call no tool, so the
-    // Approve button of the view cannot decide -- this tile can.
-    const viewsDrawn = e.surface !== 'terminal'
+    // On every surface (operator, 21.10.2026): tenantree announces no MCP Apps views any more; plan, cost and
+    // diagram are shown by this tile alone.
     const list = await read($, attached)
     if (!list.length) return next(e)
     const text = normal(e.props.text)
     const hit = list.find(a => a.tail && text.endsWith(a.tail))
     if (!hit) return next(e)
     const all = await read($, tiles)
-    const allCosts = viewsDrawn ? {} : await read($, costs)
-    const allDiagrams = viewsDrawn ? {} : await read($, diagrams)
+    const allCosts = await read($, costs)
+    const allDiagrams = await read($, diagrams)
     const shownDiagrams = hit.ids.map(id => [id, allDiagrams[id]] as const).filter((x): x is readonly [string, DiagramTile] => Boolean(x[1]))
     const shown = hit.ids.map(id => [id, all[id]] as const).filter((x): x is readonly [string, PlanTile] => Boolean(x[1]))
     const shownCosts = hit.ids.map(id => [id, allCosts[id]] as const).filter((x): x is readonly [string, CostTile] => Boolean(x[1]))
