@@ -52,7 +52,7 @@ test('the plan tile follows the reply and the band lists the open approval, with
   expect(json).toContain('tenantree')
 })
 
-test('with the plugin channel the tile offers Approve and Reject', async ($, on) => {
+test('even with a code in the plugin channel the tile decides nothing and leads to the approval page (TEN-621)', async ($, on) => {
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
@@ -63,8 +63,10 @@ test('with the plugin channel the tile offers Approve and Reject', async ($, on)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
-  expect(tile).toContain('"Approve"')
-  expect(tile).toContain('"Reject"')
+  expect(tile).not.toContain('"Approve"')
+  expect(tile).not.toContain('"Reject"')
+  expect(tile).toContain('Open the approval page')
+  expect(tile).toContain('only on the approval page')
 })
 
 test('the tile learns by itself that its plan was approved on the page', async ($, on) => {
@@ -216,12 +218,12 @@ test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEP
   expect(JSON.stringify(await band.drawn())).toContain('00:31 UTC (01:31 Europe/Berlin)')
 })
 
-test('a landscape renamed in the portal reaches the picker with the next answer', async ($, on) => {
+test('a global account renamed in the portal reaches the picker with the next answer', async ($, on) => {
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   on('mcp.connect', async () => ({ value: { isConnected: false } }) as never)
-  const target = (landscape: string) => ({ organization: 'Org', landscape, system: 'bics-labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' })
-  const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', organization: 'Org', landscape: 'BICS Labor', system: 'bics-labor', kind: 'development', active: true }], activeTarget: target('BICS Labor') })
+  const target = (globalAccount: string) => ({ landscape: 'Org', globalAccount, subaccount: 'bics-labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' })
+  const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', landscape: 'Org', globalAccount: 'BICS Labor', subaccount: 'bics-labor', kind: 'development', active: true }], activeTarget: target('BICS Labor') })
   const ACCESS = JSON.stringify({ message: 'Access', activeTarget: target('BICS BTP') })
   let answer = LIST
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: answer }], text: answer }) as never)

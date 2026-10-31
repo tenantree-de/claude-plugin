@@ -1,22 +1,26 @@
 /** The active target as the tenantree server reports it with every tool answer. */
 export type ActiveTarget = {
-  organization: string
+  /** The landscape: the customer in tenantree. */
   landscape: string
-  system: string
+  /** The global account in SAP BTP. */
+  globalAccount: string
+  subaccount: string
   kind: 'production' | 'quality' | 'development' | 'other'
   region: string
+  /** GUID of the subaccount in SAP BTP. */
   subaccountId: string | null
   signedIn: boolean
   right: 'none' | 'user' | 'admin'
   dashboardUrl?: string
 }
 
-/** A system the person may choose (tenantree_landscape_query). */
+/** A subaccount the person may choose (tenantree_landscape_query, tenantree_subaccount_query). */
 export type Target = {
+  /** ID of the subaccount in tenantree (subaccountId of tenantree_landscape_use). */
   id: string
-  organization: string
   landscape: string
-  system: string
+  globalAccount: string
+  subaccount: string
   kind: ActiveTarget['kind']
   active: boolean
 }
@@ -29,7 +33,7 @@ export type TargetState =
 /** TEPLU-12: the tenantree account of this connection. */
 export type AccountState =
   | { status: 'unknown' }
-  | { status: 'signedIn'; email: string; organizations: Array<{ name: string; role: 'admin' | 'user' }> }
+  | { status: 'signedIn'; email: string; landscapes: Array<{ name: string; role: 'admin' | 'user' }> }
   | { status: 'signedOut' }
 
 /** One row of a plan: a label and its value. */
@@ -54,14 +58,8 @@ export type PlanTile = {
   at?: number
   first?: string
   error?: string
-  /** The approval code from _meta "claude/plugins", where Claude Code hands it over; never shown. */
-  code?: string
   /** The cost notice of a plan with costs or unchecked costs (21.10.2026): approved only together with its confirmation. */
   cost?: { kind: 'paid' | 'unclear'; text: string } | null
-  /** The person confirmed the cost notice in the tile. */
-  costAck?: boolean
-  handover?: string | null
-  busy?: 'approve' | 'reject'
 }
 
 /** One section of the cost tile: rows (label and value) and lines of text. */
@@ -93,7 +91,7 @@ declare module 'claude-code' {
       tiles: Record<string, PlanTile>
       turn: string[]
       attached: Attached[]
-      signin: { url: string; system: string | null; at: number } | null
+      signin: { url: string; subaccount: string | null; at: number } | null
       logout: { url: string; at: number } | null
       account: AccountState
       expanded: Record<string, boolean>

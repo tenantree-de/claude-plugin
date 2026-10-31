@@ -6,7 +6,7 @@ import type { AccountState, ActiveTarget, Attached, CostSection, CostTile, Diagr
 /**
  * tenantree in Claude Code (operator, 15./16.10.2026):
  *
- * THE BAND above the prompt shows organization -> landscape -> subaccount of the active target, a
+ * THE BAND above the prompt shows landscape -> global account -> subaccount of the active target, a
  * picker to switch it, the sign-in at the IAS and the open approvals; the tenantree mark sits on
  * the right.
  *
@@ -29,7 +29,7 @@ const attached = atom({ plugin: 'tenantree', key: 'attached' } as const, [] as A
 const diagrams = atom({ plugin: 'tenantree', key: 'diagrams' } as const, {} as Record<string, DiagramTile>)
 const costs = atom({ plugin: 'tenantree', key: 'costs' } as const, {} as Record<string, CostTile>)
 const expanded = atom({ plugin: 'tenantree', key: 'expanded' } as const, {} as Record<string, boolean>)
-const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; system: string | null; at: number } | null)
+const signin = atom({ plugin: 'tenantree', key: 'signin' } as const, null as { url: string; subaccount: string | null; at: number } | null)
 // After signing out (17.10.2026): the one-time link that ends the IAS session in the browser.
 const logout = atom({ plugin: 'tenantree', key: 'logout' } as const, null as { url: string; at: number } | null)
 const LOGOUT_LINK = /https:\/\/[^\s)]+\/sso\/signout\/[A-Za-z0-9_-]+/
@@ -40,7 +40,6 @@ const PREFIX = 'mcp__plugin_tenantree_tenantree__'
 const PORTAL = 'https://portal.tenantree.de'
 const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
 const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
-const HANDOVER_LINK = /https:\/\/[^\s"<>\\]+\/secret\/[A-Za-z0-9_-]+/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
 /** The last line of every tenantree answer names the active target (server, 16.10.2026). */
@@ -48,7 +47,8 @@ const TARGET_LINE = /tenantree target: (.+?) → (.+?) → (.+?) \((production|q
 const STORE_KEY = 'lastTarget'
 const PLAN_MS = 15 * 60 * 1000
 const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
-const LEVEL: Record<string, string> = { structure: 'Structure', landscape: 'Landscape', account: 'Account' }
+// TEN-729: the write levels as people read them; the keys stay the internal values of the server.
+const LEVEL: Record<string, string> = { structure: 'Subaccount: structure (no endpoints)', landscape: 'Subaccount: endpoints', account: 'Global Account' }
 // The tenantree mark (Logo E) for dark surfaces.
 const MARK =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-84 -38 780 780"><g transform="matrix(1.05 0 0 1.05 -0.7 -36)"><path fill="#05A4A0" d="M320 470 Q300 214 556 190 Q576 446 320 470Z"/><rect fill="#FFFFFF" x="224" y="80" width="137" height="640"/><rect fill="#0078CF" x="14" y="20" width="556" height="125"/></g></svg>'
@@ -97,11 +97,7 @@ const COST_TEXT = {
     paid: 'This plan can incur costs. Please review the cost assessment before you approve it.',
     unclear: 'The costs of this plan have not been checked. tenantree cannot rule out that costs arise.',
   },
-  confirm: {
-    paid: 'I have read the cost notice and confirm that costs may arise.',
-    unclear: 'I have read the cost notice and confirm that the costs have not been checked and may arise.',
-  },
-  required: 'Approval is possible only after you have confirmed the cost notice.',
+  confirm: 'The approval page asks you to confirm the cost notice before you approve.',
 } as const
 
 /** The cost notice of a plan text: its kind (unclear wins) and the statements above its markers. */
@@ -378,16 +374,16 @@ function diagramAlt(d: DiagramTile): string {
 
 /**
  * The picker labels come from the list of targets, which only the landscape query sends. When an
- * answer names the active target with other names (a landscape was renamed in the portal), the
+ * answer names the active target with other names (a global account was renamed in the portal), the
  * active entry of the list follows, so that the band does not keep showing the old name.
  */
-function withActive(targets: Target[] | undefined, t: Pick<ActiveTarget, 'organization' | 'landscape' | 'system'>): Target[] | undefined {
+function withActive(targets: Target[] | undefined, t: Pick<ActiveTarget, 'landscape' | 'globalAccount' | 'subaccount'>): Target[] | undefined {
   if (!targets?.length) return targets
   const i = targets.findIndex(x => x.active)
   if (i < 0) return targets
   const a = targets[i]!
-  if (a.organization === t.organization && a.landscape === t.landscape && a.system === t.system) return targets
-  return targets.map((x, k) => (k === i ? { ...x, organization: t.organization, landscape: t.landscape, system: t.system } : x))
+  if (a.landscape === t.landscape && a.globalAccount === t.globalAccount && a.subaccount === t.subaccount) return targets
+  return targets.map((x, k) => (k === i ? { ...x, landscape: t.landscape, globalAccount: t.globalAccount, subaccount: t.subaccount } : x))
 }
 
 async function remember($: EngineInterface, result: unknown) {
@@ -398,14 +394,14 @@ async function remember($: EngineInterface, result: unknown) {
     // An SAP tool's answer names the target in its last line: enough for the band, without a call.
     const m = TARGET_LINE.exec(textOf(result))
     if (!m) return
-    const [, organization = '', landscape = '', system = '', kind = 'other'] = m
+    const [, landscape = '', globalAccount = '', subaccount = '', kind = 'other'] = m
     const at = await $.clock.now()
     await update($, target, (prev): TargetState => {
       const before = prev.status === 'known' ? prev : undefined
-      const same = before?.target && before.target.organization === organization && before.target.landscape === landscape && before.target.system === system
+      const same = before?.target && before.target.landscape === landscape && before.target.globalAccount === globalAccount && before.target.subaccount === subaccount
       // The line comes only with an answer that went through: the person is admitted there.
       if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true } } : before
-      return { status: 'known', target: { organization, landscape, system, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: withActive(before?.targets, { organization, landscape, system }), at }
+      return { status: 'known', target: { landscape, globalAccount, subaccount, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: withActive(before?.targets, { landscape, globalAccount, subaccount }), at }
     })
     await update($, message, m => (m && !m.endsWith('…') ? null : m))
     await update($, signin, () => null)
@@ -413,9 +409,9 @@ async function remember($: EngineInterface, result: unknown) {
     return
   }
   const signedInAs = fieldOf(result, 'signedInAs') as string | undefined
-  const organizations = fieldOf(result, 'organizations') as Array<{ name: string; role: 'admin' | 'user' }> | undefined
+  const landscapes = fieldOf(result, 'landscapes') as Array<{ name: string; role: 'admin' | 'user' }> | undefined
   if (signedInAs) {
-    await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, organizations: organizations ?? [] }))
+    await update($, account, (): AccountState => ({ status: 'signedIn', email: signedInAs, landscapes: landscapes ?? [] }))
     await update($, logout, () => null)
     // Signed in (again): a sign-in hint in the band is out of date (operator, 17.10.2026).
     await update($, message, m => (m && SIGNIN_NOTES.some(n => m.startsWith(n)) ? null : m))
@@ -509,7 +505,6 @@ async function check($: EngineInterface, id: string) {
     ...all,
     [id]: {
       ...tile,
-      code: undefined,
       status: (status === 'decided' ? 'decided' : 'closed') as PlanTile['status'],
       decision: get<'approve' | 'reject'>('decision'),
       by: get<string | null>('by'),
@@ -541,50 +536,12 @@ async function follow($: EngineInterface) {
   ticking = $.clock.every(POLL_MS, () => void tick($).catch(() => {}))
 }
 
-/** The approval code of a call, where Claude Code hands _meta "claude/plugins" to plugins (way B, 16.10.2026). */
-function codeOf(meta: unknown): string | undefined {
-  const plugins = (meta as Record<string, unknown> | undefined)?.['claude/plugins'] as Record<string, unknown> | undefined
-  const plan = (plugins?.tenantree as { plan?: { code?: unknown } } | undefined)?.plan
-  return typeof plan?.code === 'string' ? plan.code : undefined
-}
-
-/** Approve or reject on the person's press, with the code only the tile holds. */
-async function decide($: EngineInterface, id: string, decision: 'approve' | 'reject') {
-  const tile = (await read($, tiles))[id]
-  if (!tile?.code) return
-  await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: decision } }))
-  try {
-    // A plan with costs is approved only with the confirmed cost notice; the server checks it again (21.10.2026).
-    if (decision === 'approve' && tile.cost && !tile.costAck) {
-      await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: undefined } }))
-      return
-    }
-    const args: Record<string, unknown> = { planId: tile.planId, code: tile.code, decision }
-    if (decision === 'approve' && tile.cost && tile.costAck) args.costConfirmed = true
-    const r = await pressed($, 'tenantree_plan_decide', args, decision === 'approve' ? 'Approve' : 'Reject')
-    const body = r.text ?? textOf(r)
-    const at = await $.clock.now()
-    const closed = Boolean(r.isError) && /no longer open/.test(body)
-    await update($, tiles, all => ({
-      ...all,
-      [id]: {
-        ...tile,
-        busy: undefined,
-        code: undefined,
-        // "Not carried out: ..." is the decide tool's own refusal; any other error is the result of the approved operation.
-        status: (closed ? 'closed' : r.isError && /^Not carried out:/.test(body) ? 'unknown' : 'decided') as PlanTile['status'],
-        decision,
-        ok: !r.isError,
-        at,
-        first: body.split('\n')[0],
-        handover: HANDOVER_LINK.exec(body)?.[0] ?? null,
-        error: r.isError ? body.split('\n')[0] : undefined,
-      },
-    }))
-  } catch (err) {
-    await update($, tiles, all => ({ ...all, [id]: { ...tile, busy: undefined, status: 'unknown' as const, error: String((err as Error)?.message ?? err) } }))
-  }
-}
+/*
+ * NO DECISIONS IN THE TILE (TEN-621, 23.10.2026): the tile decided with the approval code from _meta
+ * "claude/plugins". tenantree no longer hands that code to any client -- the plugin calls through the same
+ * connection as the model, so the server cannot tell its press from a call of the model. The tile shows the
+ * plan and opens the approval page, where the person signs in and decides.
+ */
 
 /**
  * THE PERSON SIGNS OUT IN THE PORTAL (TEPLU-12, TEN-537, 17.10.2026): the auto mode of Claude Code gives no
@@ -606,9 +563,10 @@ const AUTO_BLOCKED = 'The Auto permission mode blocks this action. Please switch
 const blockedByAuto = (err: unknown) => /auto mode|classifier|no verdict|permission/i.test(String((err as Error)?.message ?? err))
 
 const LOGIN_CONTEXT =
-  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one system is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
+  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one subaccount is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
-const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b/i
+// German as well (TEPLU-13): \"Melde mich bei tenantree ab\", \"Bei tenantree abmelden\", \"tenantree abmelden\".
+const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b|\bmelde?\b.*\btenantree\b.*\bab\b|\babmelden\b.*\btenantree\b|\btenantree\b.*\babmelden\b/i
 
 async function signOut($: EngineInterface) {
   await update($, message, () => 'Signing out …')
@@ -699,7 +657,7 @@ let lastStatus = 0
 const STATUS_MS = 30_000
 const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate. Afterwards write: tenantree login'
 
-const path = (t: { organization: string; landscape: string; system: string }) => `${t.organization} → ${t.landscape} → ${t.system}`
+const path = (t: { landscape: string; globalAccount: string; subaccount: string }) => `${t.landscape} → ${t.globalAccount} → ${t.subaccount}`
 /**
  * TEN-375 / TEPLU-6: SAP BTP time (UTC) and the person's time zone from the profile (the server
  * names it in its answers), one time when both are equal. Without a known zone, UTC alone.
@@ -787,7 +745,7 @@ export const register: Register = on => {
         const t = await read($, target)
         // A link while already signed in (a renewal) is no pending sign-in for the band.
         const already = t.status === 'known' && t.target?.signedIn
-        if (url && !already) await update($, signin, () => ({ url, system: t.status === 'known' && t.target ? t.target.system : null, at }))
+        if (url && !already) await update($, signin, () => ({ url, subaccount: t.status === 'known' && t.target ? t.target.subaccount : null, at }))
       } else if (!failed && !tool.startsWith('tenantree_')) await update($, signin, () => null)
       const id = e.tool_use_id
       // THE DIAGRAM TILE (16.10.2026): the landscape drawn by the plugin after the reply.
@@ -819,20 +777,6 @@ export const register: Register = on => {
   // The tiles of a turn go under the text of its reply.
   on('turn.complete', async ($, e, next) => {
     const ids = await read($, turn).catch(() => [] as string[])
-    if (ids.length) {
-      // The codes, where Claude Code hands them to plugins; the model never reads this part.
-      try {
-        const messages = await $.session.messages()
-        const codes = new Map<string, string>()
-        for (const m of messages) for (const u of m.toolUses ?? []) {
-          const code = codeOf((u as { meta?: unknown }).meta)
-          if (code && ids.includes(u.tool_use_id)) codes.set(u.tool_use_id, code)
-        }
-        if (codes.size) await update($, tiles, all => Object.fromEntries(Object.entries(all).map(([k, v]) => [k, codes.has(k) ? { ...v, code: codes.get(k) } : v])))
-      } catch {
-        // No codes: the tile offers the approval page.
-      }
-    }
     if (ids.length && e.answer) {
       const tail = normal(e.answer).slice(-160)
       await update($, attached, list => [...list.slice(-50), { tail, ids }]).catch(() => {})
@@ -857,7 +801,7 @@ export const register: Register = on => {
     if (acc.status === 'signedOut') return { text: `Not signed in to tenantree. ${SIGNIN_HELP}` }
     if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server tenantree and sign in.' }
     const lines = [`Signed in to tenantree as ${state.account ?? 'unknown'}.`]
-    if (acc.status === 'signedIn' && acc.organizations.length) lines.push('', 'Organizations:', ...acc.organizations.map(o => `  ${o.name} (${o.role === 'admin' ? 'administrator' : 'user'})`))
+    if (acc.status === 'signedIn' && acc.landscapes.length) lines.push('', 'Landscapes:', ...acc.landscapes.map(o => `  ${o.name} (${o.role === 'admin' ? 'administrator' : 'user'})`))
     lines.push('', 'Available subaccounts:')
     for (const t of state.targets ?? []) lines.push(`${t.active ? '▶' : ' '} ${path(t)} (${KIND[t.kind]})`)
     if (!state.targets?.length) lines.push('  none assigned')
@@ -974,37 +918,17 @@ export const register: Register = on => {
                   <Text color="warning" bold>{COST_TEXT.title}</Text>
                   <Text>{COST_TEXT.lead[p.cost.kind]}</Text>
                   {p.cost.text ? <Text dimColor>{p.cost.text}</Text> : null}
-                  {p.code ? (
-                    <Box marginTop={1}>
-                      <Button
-                        key={`cost-${id}`}
-                        label={`${p.costAck ? '☑' : '☐'} ${COST_TEXT.confirm[p.cost.kind]}`}
-                        onPress={() => void update($, tiles, all => { const cur = all[id]; return cur ? { ...all, [id]: { ...cur, costAck: !cur.costAck } } : all })}
-                      />
-                    </Box>
-                  ) : null}
+                  <Text dimColor>{COST_TEXT.confirm}</Text>
                 </Box>
               ) : null}
-              {open && p.code && p.cost && !p.costAck ? (
-                <Box marginTop={1} gap={2} alignItems="center">
-                  <Button key={`reject-${id}`} label={p.busy === 'reject' ? 'Rejecting …' : 'Reject'} onPress={() => void (p.busy ? null : decide($, id, 'reject'))} />
-                  <Text dimColor>{COST_TEXT.required}</Text>
-                </Box>
-              ) : open && p.code ? (
-                <Box marginTop={1} gap={2} alignItems="center">
-                  <Button key={`approve-${id}`} label={p.busy === 'approve' ? 'Carrying out …' : 'Approve'} variant="primary" onPress={() => void (p.busy ? null : decide($, id, 'approve'))} />
-                  <Button key={`reject-${id}`} label={p.busy === 'reject' ? 'Rejecting …' : 'Reject'} onPress={() => void (p.busy ? null : decide($, id, 'reject'))} />
-                  <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text>
-                </Box>
-              ) : open ? (
+              {open ? (
                 <Box marginTop={1} flexDirection="column">
                   <Text dimColor>Valid until {time(p.expiresAt)}. Nothing is changed until you approve.</Text>
-                  <Text dimColor>Approve and reject in this tile need the plugin channel of Claude Code, which is not enabled yet; please decide on the approval page.</Text>
+                  <Text dimColor>Plans are approved or rejected only on the approval page in the browser, after your personal sign-in.</Text>
                 </Box>
               ) : null}
               {expired ? <Text dimColor>Expired at {time(p.expiresAt)} unless decided before.</Text> : null}
               {decided ? <Text color={p.decision === 'approve' && p.ok !== false ? 'success' : p.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
-              {p.handover ? <Link href={p.handover} label="Open the secure one-time link" /> : null}
               {p.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
               {p.status === 'checking' ? <Text dimColor>Reading the status …</Text> : null}
               {p.status === 'unknown' ? <Text color="error">The status could not be read{p.error ? `: ${p.error}` : '.'}</Text> : null}
@@ -1055,7 +979,7 @@ export const register: Register = on => {
       if (id === active?.id) return
       await update($, message, () => 'Switching the subaccount …')
       try {
-        const r = await pressed($, 'tenantree_landscape_use', { systemId: id }, 'Switch subaccount')
+        const r = await pressed($, 'tenantree_landscape_use', { subaccountId: id }, 'Switch subaccount')
         await remember($, r.text ?? r)
         await refresh($).catch(() => {})
         await update($, message, () => (r.isError ? 'The subaccount could not be switched.' : null))
@@ -1068,7 +992,7 @@ export const register: Register = on => {
         const r = await pressed($, 'tenantree_landscape_signin', {}, 'Sign in')
         const url = SIGNIN_LINK.exec(r.text ?? textOf(r))?.[0]
         const at = await $.clock.now()
-        if (url) await update($, signin, () => ({ url, system: t?.system ?? null, at }))
+        if (url) await update($, signin, () => ({ url, subaccount: t?.subaccount ?? null, at }))
       } catch (err) {
         await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The sign-in link could not be created.'))
       }
@@ -1155,13 +1079,13 @@ export const register: Register = on => {
         ) : null}
         {signinOpen ? (
           <Box {...ROW}>
-            <Text color="warning">◆ Sign-in required{signinOpen.system ? ` at the IAS of ${signinOpen.system}` : ''}:</Text>
+            <Text color="warning">◆ Sign-in required{signinOpen.subaccount ? ` at the IAS of ${signinOpen.subaccount}` : ''}:</Text>
             <Link href={signinOpen.url} label="Sign in" />
             <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
           </Box>
         ) : notAdmitted ? (
           <Box {...ROW}>
-            <Text color="warning">◆ Not signed in at the IAS of {t.system}.</Text>
+            <Text color="warning">◆ Not signed in at the IAS of {t.subaccount}.</Text>
             <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
           </Box>
         ) : null}
