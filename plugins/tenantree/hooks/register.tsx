@@ -1080,7 +1080,7 @@ export const register: Register = on => {
     // (IAS sign-in, approvals, errors). Fixed widths for labels and the right column keep everything aligned.
     const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
     const LABEL = 14
-    const RIGHT = 18
+    const RIGHT = 22
     return (
       <Box flexDirection="column" gap={1} paddingY={1} paddingX={1}>
         <Box {...ROW} justifyContent="space-between">
@@ -1096,7 +1096,6 @@ export const register: Register = on => {
           </Box>
           <Box width={RIGHT} justifyContent="flex-end">
             <Box {...ROW} gap={1}>
-              {acc.status !== 'signedOut' ? <Button key="refresh" label="↻" onPress={() => void refreshAll($)} /> : null}
               {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
               {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
               <Link href={dashboard} label="tenantree" />
@@ -1117,11 +1116,15 @@ export const register: Register = on => {
             )}
           </Box>
           <Box width={RIGHT} justifyContent="flex-end">
-            {acc.status === 'signedOut' ? (
-              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-            ) : email ? (
-              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-            ) : null}
+            {/* TEPLU-14 (operator, 11.11.2026): the refresh button sits next to Sign in or Sign out, not at the mark. */}
+            <Box {...ROW} gap={1}>
+              <Button key="refresh" label="↻" onPress={() => void refreshAll($)} />
+              {acc.status === 'signedOut' ? (
+                <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+              ) : email ? (
+                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+              ) : null}
+            </Box>
           </Box>
         </Box>
         {note ? (
