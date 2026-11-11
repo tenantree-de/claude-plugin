@@ -506,6 +506,32 @@ async function refreshAll($: EngineInterface) {
   }
 }
 
+/** TEPLU-16: while a sign-in link is open, the subaccount list is read every 5 seconds until the sign-in arrives. */
+let signinTimer: { cancel: () => void } | null = null
+let lastSigninTick = 0
+async function signinTick($: EngineInterface) {
+  const now = await $.clock.now()
+  lastSigninTick = now
+  const pending = await read($, signin)
+  const t = await read($, target)
+  const done = t.status === 'known' && Boolean(t.target?.signedIn) && (!pending?.subaccount || t.target?.subaccount === pending.subaccount)
+  if (!pending || done || now - pending.at >= SIGNIN_MS) {
+    if (pending && done) await update($, signin, () => null)
+    signinTimer?.cancel()
+    signinTimer = null
+    return
+  }
+  lastTargets = 0
+  await loadTargets($)
+}
+async function followSignin($: EngineInterface) {
+  const now = await $.clock.now()
+  if (signinTimer && now - lastSigninTick < 2 * POLL_MS) return
+  signinTimer?.cancel()
+  lastSigninTick = now
+  signinTimer = $.clock.every(POLL_MS, () => void signinTick($).catch(() => {}))
+}
+
 let ticking: { cancel: () => void } | null = null
 let lastTick = 0
 const POLL_MS = 5000
@@ -985,7 +1011,14 @@ export const register: Register = on => {
     const loggedOut = await read($, logout)
     const logoutOpen = loggedOut && now - loggedOut.at < SIGNIN_MS ? loggedOut : null
     const pending = await read($, signin)
-    const signinOpen = pending && now - pending.at < SIGNIN_MS ? pending : null
+    // TEPLU-16 (operator, 11.11.2026): once the subaccount reports the sign-in, the link leaves the band -- a used
+    // link opened a second time only shows "expired or already used". While it is open, the band asks every
+    // 5 seconds (read-only) whether the sign-in arrived.
+    const preState = await read($, target)
+    const signedInNow = preState.status === 'known' && Boolean(preState.target?.signedIn) && (!pending?.subaccount || preState.target?.subaccount === pending.subaccount)
+    if (pending && signedInNow) void update($, signin, () => null).catch(() => {})
+    const signinOpen = pending && !signedInNow && now - pending.at < SIGNIN_MS ? pending : null
+    if (signinOpen) void followSignin($).catch(() => {})
     const acc = await read($, account)
     void watchSignIn($).catch(() => {})
     // The picker needs the list of subaccounts; after a sign-in only the active target may be known.
@@ -1107,7 +1140,7 @@ export const register: Register = on => {
           <Box {...ROW}>
             <Text color="warning">◆ Sign-in required{signinOpen.subaccount ? ` at the IAS of ${signinOpen.subaccount}` : ''}:</Text>
             <Link href={signinOpen.url} label="Sign in" />
-            <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, once</Text>
+            <Text dimColor>valid until {time(signinOpen.at + SIGNIN_MS)}, usable once; this notice disappears after the sign-in</Text>
           </Box>
         ) : notAdmitted ? (
           <Box {...ROW}>

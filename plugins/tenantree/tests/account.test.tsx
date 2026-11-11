@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const P = 'mcp__plugin_tenantree_tenantree__'
 const PROFILE = JSON.stringify({
@@ -100,4 +100,26 @@ test('TEN-750: an expired IAS sign-in of the active target shows "Sign-in expire
   expect(drawn).toContain('Sign-in expired at the IAS of Labor.')
   expect(drawn).not.toContain('Not signed in at the IAS of Labor.')
   expect(drawn).toContain('Sign in')
+})
+
+test('TEPLU-16: the sign-in link leaves the band once the subaccount reports the sign-in', async ($, on) => {
+  const target = (signedIn: boolean) => ({ landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn, right: signedIn ? 'admin' : 'none' })
+  const LINK = 'https://portal.tenantree.de/sso/start/abcdefghijklmnopqrstuvwxyz012345'
+  const SIGNIN = JSON.stringify({ message: `Sign-in at the IAS of Labor:\n\n${LINK}\n\nPlease open the link.`, signedInAs: 'person@example.test', activeTarget: target(false) })
+  const LIST = (signedIn: boolean) => JSON.stringify({ message: 'Landscapes', signedInAs: 'person@example.test', targets: [{ id: 's1', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', active: true }], activeTarget: target(signedIn) })
+  const clock = mock.clock(on, { now: 1_000_000 })
+  let signedIn = false
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: LIST(signedIn) }], isError: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: SIGNIN }], text: SIGNIN }) as never)
+  on('store.set', async () => ({ value: undefined }) as never)
+  await $.tool.call({ tool: `${P}tenantree_landscape_signin`, tool_use_id: 'toolu_s' } as never)
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 160 } } as never)
+  expect(JSON.stringify(await band.drawn())).toContain(LINK)
+  signedIn = true
+  await clock.advance(6000)
+  const after = JSON.stringify(await band.drawn())
+  expect(after).not.toContain(LINK)
+  expect(after).not.toContain('Sign-in required')
 })
