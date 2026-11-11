@@ -86,6 +86,89 @@ test('the tile learns by itself that its plan was approved on the page', async (
   expect(tile).not.toContain('Update status')
 })
 
+for (const [decision, expected] of [['approve', ['freigegeben']], ['reject', []]] as const) {
+  test(`TEPLU-15: deciding the only open plan (${decision}) proposes ${JSON.stringify(expected)} in the prompt box`, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const suggested: string[] = []
+    on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
+    on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+    on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+    on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision, by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' }) }], isError: false } }) as never)
+    on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+    on('turn.complete', async () => ({ text: '' }) as never)
+    on('session.messages', async () => ({ value: [] }) as never)
+    await $.tool.call({ tool: TOOL, tool_use_id: `toolu_s_${decision}`, id: 'Tenantree_Demo_iFlow_X' } as never)
+    await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: `ts_${decision}`, reason: 'answer', category: null } as never)
+    await clock.advance(6000)
+    expect(suggested).toEqual([...expected])
+  })
+}
+
+test('TEPLU-15: with two open plans an approval proposes nothing', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const suggested: string[] = []
+  on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  let calls = 0
+  on('mcp.call', async () => {
+    calls++
+    const status = calls === 1 ? { status: 'decided', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' } : { status: 'open' }
+    return { value: { content: [{ type: 'text', text: JSON.stringify(status) }], isError: false } } as never
+  })
+  const SECOND = TEXT.replaceAll(PLAN, '4c8cb774-1d74-4a6b-a915-d6ed04704b5b')
+  let n = 0
+  on('tool.call', async () => { n++; const t = n === 1 ? TEXT : SECOND; return { ref: n, result: [{ type: 'text', text: t }], text: t } as never })
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_two_1', id: 'A' } as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_two_2', id: 'B' } as never)
+  await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 'two', reason: 'answer', category: null } as never)
+  await clock.advance(6000)
+  expect(suggested).toEqual([])
+})
+
+test('TEPLU-14: the band shows the refresh button, which reads the plan state again at once', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  const called: string[] = []
+  on('mcp.call', async (_$, e) => {
+    const tool = (e as { tool?: string; name?: string }).tool ?? (e as { name?: string }).name ?? ''
+    called.push(String(tool))
+    if (String(tool).includes('plan_read')) return { value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' }) }], isError: false } } as never
+    return { value: { content: [{ type: 'text', text: '{}' }], isError: false } } as never
+  })
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_r', id: 'Tenantree_Demo_iFlow_X' } as never)
+  await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 'tr', reason: 'answer', category: null } as never)
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
+  expect(JSON.stringify(await band.drawn())).toContain('↻')
+  called.length = 0
+  await band.press({ key: 'refresh' } as never)
+  expect(called.some(t => t.includes('plan_read'))).toBe(true)
+  expect(JSON.stringify(await band.drawn())).not.toContain('Approval pending')
+})
+
+test('TEN-754: an approved plan whose execution failed reads Approved, not carried out', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision: 'approve', by: 'ada@example.com', ok: false, at: 1_000_500, first: 'Not carried out: SAP answered 400.' }) }], isError: false } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.messages', async () => ({ value: [] }) as never)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_754', id: 'Tenantree_Demo_iFlow_X' } as never)
+  await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 't754', reason: 'answer', category: null } as never)
+  const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
+  await clock.advance(6000)
+  const tile = JSON.stringify(await reply.drawn())
+  expect(tile).toContain('Approved, not carried out')
+  expect(tile).not.toContain('Approved and carried out')
+})
+
 const COST = [
   'THE ACCOUNT NOW',
   '  Commercial model of the global account: not read (needs the account access cis/central).',

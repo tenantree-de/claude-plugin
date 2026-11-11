@@ -79,3 +79,25 @@ test('TEN-729: the picker sets the target with the parameter subaccountId', asyn
   expect(args[0]!.subaccountId).toBe('s2')
   expect(args[0]!.systemId).toBeUndefined()
 })
+
+test('TEN-750: an expired IAS sign-in of the active target shows "Sign-in expired" with Sign in, not the admitted state', async ($, on) => {
+  const EXPIRED = JSON.stringify({
+    message: 'Landscapes',
+    signedInAs: 'person@example.test',
+    targets: [{ id: 's1', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', active: true }],
+    activeTarget: { landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: false, signInExpired: true, right: 'none' },
+  })
+  on('clock.now', async () => ({ value: 1_000_000 }) as never)
+  on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: EXPIRED }], isError: false } }) as never)
+  on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
+  on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: EXPIRED }], text: EXPIRED }) as never)
+  on('store.set', async () => ({ value: undefined }) as never)
+  await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_e' } as never)
+  const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 160 } } as never)
+  const drawn = JSON.stringify(await band.drawn())
+  expect(drawn).toContain('Sign-in expired at the IAS of Labor.')
+  expect(drawn).not.toContain('Not signed in at the IAS of Labor.')
+  expect(drawn).toContain('Sign in')
+})

@@ -400,7 +400,7 @@ async function remember($: EngineInterface, result: unknown) {
       const before = prev.status === 'known' ? prev : undefined
       const same = before?.target && before.target.landscape === landscape && before.target.globalAccount === globalAccount && before.target.subaccount === subaccount
       // The line comes only with an answer that went through: the person is admitted there.
-      if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true } } : before
+      if (same && before?.target) return before.target.right === 'none' || !before.target.signedIn ? { ...before, target: { ...before.target, right: 'user', signedIn: true, signInExpired: false } } : before
       return { status: 'known', target: { landscape, globalAccount, subaccount, kind: kind as ActiveTarget['kind'], region: '', subaccountId: null, signedIn: true, right: 'user' }, account: before?.account, targets: withActive(before?.targets, { landscape, globalAccount, subaccount }), at }
     })
     await update($, message, m => (m && !m.endsWith('…') ? null : m))
@@ -487,6 +487,25 @@ async function pressed($: EngineInterface, tool: string, args: Record<string, un
  * few seconds whether it was decided -- on the approval page, in another tile, or not at all. The read
  * tool is marked read-only, so auto mode lets it through without a request of the person.
  */
+const APPROVED_PROMPT = 'freigegeben'
+
+/**
+ * TEPLU-14 (operator, 11.11.2026): the refresh button of the band reads everything again at once -- account and
+ * active target, the list of subaccounts and the state of every open plan -- instead of waiting for the next poll.
+ */
+async function refreshAll($: EngineInterface) {
+  await update($, message, () => 'Updating …')
+  try {
+    lastTargets = 0
+    await refresh($)
+    await loadTargets($)
+    for (const [id, p] of Object.entries(await read($, tiles))) if (p.status === 'open') await check($, id).catch(() => {})
+    await update($, message, () => null)
+  } catch (err) {
+    await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The status could not be updated.'))
+  }
+}
+
 let ticking: { cancel: () => void } | null = null
 let lastTick = 0
 const POLL_MS = 5000
@@ -501,6 +520,12 @@ async function check($: EngineInterface, id: string) {
   const status = String(fieldOf(r, 'status') ?? '')
   if (status === 'open' || !status) return
   const get = <T,>(k: string) => fieldOf(r, k) as T | undefined
+  // TEPLU-15 (operator, 11.11.2026): when the only open plan is approved, "freigegeben" is proposed as the dim
+  // suggestion of the prompt box, so Tab and Enter tell the agent to continue. With several open plans it would
+  // be unclear which one was approved: no suggestion. The engine shows none while the box holds text.
+  const now = await $.clock.now()
+  const othersOpen = Object.entries(await read($, tiles)).some(([k, p]) => k !== id && p.status === 'open' && now <= p.expiresAt)
+  if (status === 'decided' && get<string>('decision') === 'approve' && !othersOpen) void $.prompt.suggest({ text: APPROVED_PROMPT }).catch(() => {})
   await update($, tiles, all => ({
     ...all,
     [id]: {
@@ -904,7 +929,7 @@ export const register: Register = on => {
           const isOpen = Boolean(opened[id])
           const decided =
             p.status === 'decided'
-              ? `${p.decision === 'approve' ? (p.ok === false ? 'Approved, but not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.`
+              ? `${p.decision === 'approve' ? (p.ok === false ? 'Approved, not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.`
               : null
           return (
             <Box key={id} flexDirection="column" borderStyle="round" borderColor={p.status === 'open' && !expired ? 'suggestion' : undefined} paddingX={1}>
@@ -1038,6 +1063,7 @@ export const register: Register = on => {
           </Box>
           <Box width={RIGHT} justifyContent="flex-end">
             <Box {...ROW} gap={1}>
+              {acc.status !== 'signedOut' ? <Button key="refresh" label="↻" onPress={() => void refreshAll($)} /> : null}
               {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
               {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
               <Link href={dashboard} label="tenantree" />
@@ -1085,7 +1111,8 @@ export const register: Register = on => {
           </Box>
         ) : notAdmitted ? (
           <Box {...ROW}>
-            <Text color="warning">◆ Not signed in at the IAS of {t.subaccount}.</Text>
+            {/* TEN-750: an expired sign-in is named as such; the button leads to tenantree_landscape_signin. */}
+            <Text color="warning">{t.signInExpired ? `◆ Sign-in expired at the IAS of ${t.subaccount}.` : `◆ Not signed in at the IAS of ${t.subaccount}.`}</Text>
             <Button key="signin" label="Sign in" onPress={() => void askSignin()} />
           </Box>
         ) : null}

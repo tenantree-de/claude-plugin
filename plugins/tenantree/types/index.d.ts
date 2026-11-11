@@ -9,7 +9,10 @@ export type ActiveTarget = {
   region: string
   /** GUID of the subaccount in SAP BTP. */
   subaccountId: string | null
+  /** Whether the sign-in at the IAS of the subaccount is valid now (false once it has expired). */
   signedIn: boolean
+  /** TEN-750: true when a sign-in existed and has expired. */
+  signInExpired?: boolean
   right: 'none' | 'user' | 'admin'
   dashboardUrl?: string
 }
