@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-const P = 'mcp__plugin_tenantree_tenantree__'
+const P = 'mcp__plugin_tenantree_landscape__'
 const PROFILE = JSON.stringify({
   message: 'Signed in to tenantree as person@example.test.',
   signedInAs: 'person@example.test',
@@ -13,7 +13,7 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
   // Connected; the picker list comes from the landscape query the band reads itself.
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
   const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', active: true }, { id: 's2', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'QS', kind: 'quality', active: false }], activeTarget: { landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' } })
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: LIST }], isError: false } }) as never)
   on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
@@ -55,14 +55,14 @@ test('TEPLU-12: the band shows the account with Sign out to the portal; a call t
 
   // Sign in: where the host cannot start the sign-in, the band names the way through /mcp.
   await band.press({ key: 'signin-tenantree' } as never)
-  expect(JSON.stringify(await band.drawn())).toContain('select tenantree and choose Authenticate')
+  expect(JSON.stringify(await band.drawn())).toContain('select plugin:tenantree:landscape and choose Authenticate')
 })
 
 test('TEN-729: the picker sets the target with the parameter subaccountId', async ($, on) => {
   const args: Array<Record<string, unknown>> = []
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
   const LIST = JSON.stringify({ message: 'Landscapes', targets: [{ id: 's1', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', active: true }, { id: 's2', landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'QS', kind: 'quality', active: false }], activeTarget: { landscape: 'Brauer IT', globalAccount: 'BICS BTP', subaccount: 'Labor', kind: 'development', region: 'eu10', subaccountId: null, signedIn: true, right: 'admin' } })
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: LIST }], isError: false } }) as never)
   on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
@@ -89,7 +89,7 @@ test('TEN-750: an expired IAS sign-in of the active target shows "Sign-in expire
   })
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: EXPIRED }], isError: false } }) as never)
   on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: EXPIRED }], text: EXPIRED }) as never)
@@ -110,7 +110,7 @@ test('TEPLU-16: the sign-in link leaves the band once the subaccount reports the
   const clock = mock.clock(on, { now: 1_000_000 })
   let signedIn = false
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:tenantree' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: LIST(signedIn) }], isError: false } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: SIGNIN }], text: SIGNIN }) as never)
   on('store.set', async () => ({ value: undefined }) as never)

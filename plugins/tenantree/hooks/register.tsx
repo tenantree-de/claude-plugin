@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AccountState, ActiveTarget, Attached, CostSection, CostTile, DiagramTile, PlanTile, Row, Target, TargetState } from '../types'
+import type { AccountState, ActiveTarget, Attached, BandState, CostSection, CostTile, DiagramTile, PlanTile, Row, Target, TargetState } from '../types'
 
 /**
  * tenantree in Claude Code (operator, 15./16.10.2026):
@@ -36,9 +36,16 @@ const LOGOUT_LINK = /https:\/\/[^\s)]+\/sso\/signout\/[A-Za-z0-9_-]+/
 /** TEPLU-12: the tenantree account of this connection; signedOut after Sign out or when the server asks for a sign-in. */
 const account = atom({ plugin: 'tenantree', key: 'account' } as const, { status: 'unknown' } as AccountState)
 
-const PREFIX = 'mcp__plugin_tenantree_tenantree__'
+/**
+ * TEPLU-17 (operator, 12.11.2026): the band appears only in projects where tenantree was used, and the person may
+ * fold it to a small badge. Both are kept per project (the session's project root) across restarts of Claude Code.
+ */
+const band = atom({ plugin: 'tenantree', key: 'band' } as const, null as BandState | null)
+const BAND_KEY = 'band:'
+
+const PREFIX = 'mcp__plugin_tenantree_landscape__'
 const PORTAL = 'https://portal.tenantree.de'
-const TENANTREE_TOOL = /^mcp__plugin_tenantree_tenantree__([a-z0-9_]+)$/
+const TENANTREE_TOOL = /^mcp__plugin_tenantree_landscape__([a-z0-9_]+)$/
 const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
@@ -120,7 +127,9 @@ function costOfPlan(text: string): PlanTile['cost'] {
   }
   return kind ? { kind, text: parts.filter(Boolean).join('\n\n') } : null
 }
-const LEFT_OUT = new Set(['Plan', 'Tool', 'Enabled because'])
+const LEFT_OUT = new Set(['Plan', 'Tool', 'Enabled because', 'Summary'])
+const STEP = /^Step (\d+): (.*?)(?: \[([^\]]+)\])?$/
+const WARNING = /^(WARNING|Warning|TRAP)[:\s]/
 
 /** The plan as its text states it: what the tile shows. */
 function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | 'status'> {
@@ -128,17 +137,41 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
   const facts: Row[] = []
   const values: Row[] = []
   const warnings: string[] = []
+  const steps: NonNullable<PlanTile['steps']> = []
   let title = ''
   let level: string | null = null
   let target: string | null = null
   let headline = ''
+  let summary = ''
   for (let i = 0; i < lines.length; i++) {
-    const t = (lines[i] ?? '').trim()
+    const raw = lines[i] ?? ''
+    const t = raw.trim()
     if (!t || FOR_THE_MODEL.test(t) || COST_MARK.test(t)) continue
     if (!headline) {
       headline = t
       continue
     }
+    // TEN-744: the plan at a glance, written by the server below the approval link.
+    const glance = /^Summary:\s+(.*)$/.exec(raw)
+    if (glance) {
+      summary = glance[1] ?? ''
+      continue
+    }
+    // A plan sequence (TEN-540): its steps as a short list; the plans of the steps stay in the reply.
+    const step = STEP.exec(raw)
+    if (step) {
+      steps.push({ n: Number(step[1]), title: step[2] ?? '', irreversible: /\birreversible\b/.test(step[3] ?? '') })
+      continue
+    }
+    // Warnings stay visible, every one of them, also those of a step; one may run over several lines (as on the server).
+    if (WARNING.test(t)) {
+      let w = t.replace(/^(WARNING|Warning|TRAP):?\s*/, '')
+      while (i + 1 < lines.length && (lines[i + 1] ?? '').trim() && !FACT.test((lines[i + 1] ?? '').trim()) && !FOR_THE_MODEL.test((lines[i + 1] ?? '').trim()) && !STEP.test(lines[i + 1] ?? '')) w += ` ${(lines[++i] ?? '').trim()}`
+      warnings.push(w.replace(/^[a-z]/, c => c.toUpperCase()))
+      continue
+    }
+    // Inside a step's own plan: neither facts nor values of the sequence itself.
+    if (steps.length && /^\s/.test(raw)) continue
     if (t === 'With:') {
       const block: string[] = []
       for (i++; i < lines.length && (lines[i] ?? '').trim(); i++) block.push(lines[i] ?? '')
@@ -155,17 +188,13 @@ function planOf(text: string): Omit<PlanTile, 'planId' | 'url' | 'expiresAt' | '
       level = plan[2] ?? null
       continue
     }
-    if (/^(WARNING|Warning|TRAP)[:\s]/.test(t)) {
-      warnings.push(t.replace(/^(WARNING|Warning|TRAP):?\s*/, ''))
-      continue
-    }
     const fact = FACT.exec(t)
     if (fact && fact[1] && fact[2]) {
       if (fact[1] === 'Tenant') target = fact[2]
       else if (!LEFT_OUT.has(fact[1])) facts.push({ label: fact[1], value: fact[2] })
     }
   }
-  return { title: title || 'Plan', level, target, headline, facts, values, warnings, cost: costOfPlan(text) }
+  return { title: title || 'Plan', level, target, headline, summary, steps, facts, values, warnings, cost: costOfPlan(text) }
 }
 
 // --- The cost text -----------------------------------------------------------
@@ -438,8 +467,9 @@ async function keep($: EngineInterface) {
 
 async function serverOf($: EngineInterface): Promise<string | null> {
   const known = await read($, server)
-  if (known) return known
-  const connected = await $.mcp.connect('tenantree')
+  // TEPLU-18: a name cached before the server key changed from "tenantree" to "landscape" is not reused.
+  if (known && known.endsWith(':landscape')) return known
+  const connected = await $.mcp.connect('landscape')
   if (!connected.isConnected) {
     // The server asks for a sign-in: the band offers it (TEPLU-12).
     if (connected.reason === 'auth') {
@@ -499,7 +529,7 @@ async function refreshAll($: EngineInterface) {
     lastTargets = 0
     await refresh($)
     await loadTargets($)
-    for (const [id, p] of Object.entries(await read($, tiles))) if (p.status === 'open') await check($, id).catch(() => {})
+    for (const [id, p] of Object.entries(await read($, tiles))) if (p.status === 'open' || p.status === 'running') await check($, id).catch(() => {})
     await update($, message, () => null)
   } catch (err) {
     await update($, message, () => (blockedByAuto(err) ? AUTO_BLOCKED : 'The status could not be updated.'))
@@ -533,35 +563,54 @@ async function followSignin($: EngineInterface) {
 }
 
 let ticking: { cancel: () => void } | null = null
+// TEN-742 (review 11.11.2026): plans the agent already waits on with tenantree_plan_wait. The agent continues by itself
+// once the plan is decided, so the prompt box proposes nothing for them.
+const waitedOn = new Set<string>()
+// TEN-742: a tile is followed while its plan is open, and after the approval while it is being carried out.
+const RUNNING_MS = 2 * 60 * 60 * 1000
+const followed = (p: PlanTile, now: number) => (p.status === 'open' && now <= p.expiresAt + POLL_MS) || (p.status === 'running' && now <= p.expiresAt + RUNNING_MS)
 let lastTick = 0
 const POLL_MS = 5000
 
 async function check($: EngineInterface, id: string) {
   const tile = (await read($, tiles))[id]
-  if (!tile || tile.status !== 'open') return
+  if (!tile || (tile.status !== 'open' && tile.status !== 'running')) return
   const name = await serverOf($)
   if (!name) return
   const r = await $.mcp.call(name, 'tenantree_plan_read', { planId: tile.planId })
   if (r.isError) return
-  const status = String(fieldOf(r, 'status') ?? '')
-  if (status === 'open' || !status) return
   const get = <T,>(k: string) => fieldOf(r, k) as T | undefined
+  // TEN-742: the server names the state (open, running, approved, rejected, expired, superseded, unknown); a server
+  // before TEN-742 only says open, decided or closed.
+  const legacy = String(fieldOf(r, 'status') ?? '')
+  const state = String(get<string>('state') ?? (legacy === 'decided' ? (get<string>('decision') === 'approve' ? 'approved' : 'rejected') : legacy))
+  if (state === 'open' || !state) return
+  const next: PlanTile['status'] =
+    state === 'running' ? 'running' : state === 'approved' || state === 'rejected' ? 'decided' : state === 'expired' || state === 'superseded' || state === 'interrupted' ? state : 'closed'
+  const sequence = get<{ status: string; done: number; total: number }>('sequence') ?? null
+  // TEN-793: the step being carried out, as one line ("Step 2 of 3: ..."); a server before TEN-793 sends none.
+  const progress = next === 'running' ? (get<{ line?: string }>('progress')?.line ?? null) : null
+  if (next === tile.status && next === 'running' && sequence?.done === tile.sequence?.done && sequence?.status === tile.sequence?.status && progress === (tile.progress ?? null)) return
   // TEPLU-15 (operator, 11.11.2026): when the only open plan is approved, "freigegeben" is proposed as the dim
   // suggestion of the prompt box, so Tab and Enter tell the agent to continue. With several open plans it would
   // be unclear which one was approved: no suggestion. The engine shows none while the box holds text.
+  // Once per plan: on the step from open to approved (TEN-742: also when it is still being carried out).
   const now = await $.clock.now()
   const othersOpen = Object.entries(await read($, tiles)).some(([k, p]) => k !== id && p.status === 'open' && now <= p.expiresAt)
-  if (status === 'decided' && get<string>('decision') === 'approve' && !othersOpen) void $.prompt.suggest({ text: APPROVED_PROMPT }).catch(() => {})
+  const approvedNow = tile.status === 'open' && (state === 'running' || state === 'approved')
+  if (approvedNow && !othersOpen && !waitedOn.has(tile.planId)) void $.prompt.suggest({ text: APPROVED_PROMPT }).catch(() => {})
   await update($, tiles, all => ({
     ...all,
     [id]: {
       ...tile,
-      status: (status === 'decided' ? 'decided' : 'closed') as PlanTile['status'],
-      decision: get<'approve' | 'reject'>('decision'),
+      status: next,
+      decision: get<'approve' | 'reject'>('decision') ?? (state === 'running' ? 'approve' : undefined),
       by: get<string | null>('by'),
       ok: get<boolean>('ok'),
       at: get<number>('at'),
       first: get<string>('first'),
+      sequence,
+      progress,
     },
   }))
 }
@@ -569,7 +618,7 @@ async function check($: EngineInterface, id: string) {
 async function tick($: EngineInterface) {
   const now = await $.clock.now()
   lastTick = now
-  const open = Object.entries(await read($, tiles)).filter(([, p]) => p.status === 'open' && now <= p.expiresAt + POLL_MS)
+  const open = Object.entries(await read($, tiles)).filter(([, p]) => followed(p, now))
   if (!open.length) {
     ticking?.cancel()
     ticking = null
@@ -614,7 +663,7 @@ const AUTO_BLOCKED = 'The Auto permission mode blocks this action. Please switch
 const blockedByAuto = (err: unknown) => /auto mode|classifier|no verdict|permission/i.test(String((err as Error)?.message ?? err))
 
 const LOGIN_CONTEXT =
-  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one subaccount is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select tenantree and choose Authenticate, then to write "tenantree login" again.'
+  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one subaccount is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select plugin:tenantree:landscape and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
 // German as well (TEPLU-13): \"Melde mich bei tenantree ab\", \"Bei tenantree abmelden\", \"tenantree abmelden\".
 const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b|\bmelde?\b.*\btenantree\b.*\bab\b|\babmelden\b.*\btenantree\b|\btenantree\b.*\babmelden\b/i
@@ -650,7 +699,7 @@ const WATCH_MS = 5000
 let wasConnected = true
 async function checkSignIn($: EngineInterface) {
   lastWatch = await $.clock.now()
-  const c = await $.mcp.connect('tenantree').catch(() => null)
+  const c = await $.mcp.connect('landscape').catch(() => null)
   const before = wasConnected
   wasConnected = Boolean(c?.isConnected)
   if (!c?.isConnected) return
@@ -690,7 +739,7 @@ async function signedOut($: EngineInterface) {
 /** THE PERSON SIGNS IN: Claude Code holds the OAuth sign-in; connecting starts it where the host can. */
 async function signIn($: EngineInterface) {
   await update($, message, () => 'Connecting to tenantree …')
-  const connected = await $.mcp.connect('tenantree').catch(() => null)
+  const connected = await $.mcp.connect('landscape').catch(() => null)
   if (connected?.isConnected) {
     await update($, server, () => connected.server)
     await refresh($).catch(() => {})
@@ -703,10 +752,10 @@ async function signIn($: EngineInterface) {
   await update($, message, () => (filled?.isFilled ? SIGNIN_READY : SIGNIN_HELP))
 }
 const SIGNIN_NOTES = ['/mcp is in the prompt box', 'To sign in,', 'Connecting to tenantree']
-const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select tenantree and choose Authenticate. Afterwards write: tenantree login'
+const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select plugin:tenantree:landscape and choose Authenticate. Afterwards write: tenantree login'
 let lastStatus = 0
 const STATUS_MS = 30_000
-const SIGNIN_HELP = 'To sign in, run /mcp, select tenantree and choose Authenticate. Afterwards write: tenantree login'
+const SIGNIN_HELP = 'To sign in, run /mcp, select plugin:tenantree:landscape and choose Authenticate. Afterwards write: tenantree login'
 
 const path = (t: { landscape: string; globalAccount: string; subaccount: string }) => `${t.landscape} → ${t.globalAccount} → ${t.subaccount}`
 /**
@@ -727,13 +776,38 @@ const time = (ms?: number) => {
 }
 const normal = (s: string) => s.replace(/\s+/g, ' ').trim()
 
+/**
+ * TEPLU-17: the band of the session's project. With `keep`, a project not held yet is read from the store into the
+ * session's state; without it (while drawing, which never writes) it is only read.
+ */
+async function bandOf($: EngineInterface, keep = true): Promise<BandState> {
+  const project = await $.session.root().catch(() => '')
+  const known = await read($, band)
+  if (known && known.project === project) return known
+  const kept = (await $.store.get(BAND_KEY + project).catch(() => undefined)) as Partial<BandState> | undefined
+  const loaded: BandState = { project, used: kept?.used === true, collapsed: kept?.collapsed === true }
+  if (!keep) return loaded
+  await update($, band, prev => (prev && prev.project === project ? prev : loaded))
+  return (await read($, band)) ?? loaded
+}
+
+/** TEPLU-17: changes the band of the session's project and keeps it for the next start. */
+async function setBand($: EngineInterface, change: Partial<Omit<BandState, 'project'>>) {
+  const now = await bandOf($)
+  if (Object.entries(change).every(([k, v]) => now[k as keyof BandState] === v)) return
+  const next: BandState = { ...now, ...change }
+  await update($, band, () => next)
+  await $.store.set(BAND_KEY + next.project, { used: next.used, collapsed: next.collapsed }).catch(() => {})
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
+    await bandOf($).catch(() => {})
     const last = (await $.store.get(STORE_KEY).catch(() => null)) as TargetState | null
     if (last && last.status === 'known') await update($, target, prev => (prev.status === 'unknown' ? last : prev)).catch(() => {})
-    if (Object.values(await read($, tiles).catch(() => ({}))).some(p => p.status === 'open')) await follow($)
-    await $.command.register({ name: 'tenantree', description: 'tenantree account: show it, sign in or sign out', argumentHint: '[signin | signout]' })
+    if (Object.values(await read($, tiles).catch(() => ({}))).some(p => p.status === 'open' || p.status === 'running')) await follow($)
+    await $.command.register({ name: 'tenantree', description: 'tenantree: show the band and the account, sign in or sign out', argumentHint: '[signin | signout]' })
     void refresh($).catch(() => {})
     void watchSignIn($).catch(() => {})
     return result
@@ -776,14 +850,21 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const result = await next(e)
     const m = typeof e.tool === 'string' ? TENANTREE_TOOL.exec(e.tool) : null
     const tool = m?.[1]
+    // Noted before the call: tenantree_plan_wait blocks while the person decides, and the tile may see the decision first.
+    const waitFor = tool === 'tenantree_plan_wait' ? (e as { planId?: unknown }).planId : undefined
+    if (typeof waitFor === 'string') waitedOn.add(waitFor)
+    const result = await next(e)
     if (!tool) return result
     // The band and the tiles must never disturb the tool call itself.
     try {
+      // TEPLU-17: a tenantree tool called in this project shows the band here from now on.
+      await setBand($, { used: true }).catch(() => {})
       await remember($, result)
       const text = textOf(result)
+      // A wait that ended with the plan still open: the agent may end its turn, so the proposal applies again.
+      if (typeof waitFor === 'string' && /^Plan status: open\b/.test(text)) waitedOn.delete(waitFor)
       const failed = Boolean((result as { isError?: boolean } | null)?.isError)
       if (failed && NEEDS_SIGNIN.test(text)) {
         await signedOut($)
@@ -837,6 +918,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'tenantree' }, async ($, e) => {
+    // TEPLU-17: /tenantree shows the band in this project, expanded, whatever the arguments.
+    await setBand($, { used: true, collapsed: false }).catch(() => {})
     const verb = String((e as { args?: unknown }).args ?? '').trim().toLowerCase().replace(/[^a-z]/g, '')
     if (verb === 'signout' || verb === 'logout') {
       await signOut($)
@@ -850,7 +933,7 @@ export const register: Register = on => {
     const state = await read($, target)
     const acc = await read($, account)
     if (acc.status === 'signedOut') return { text: `Not signed in to tenantree. ${SIGNIN_HELP}` }
-    if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server tenantree and sign in.' }
+    if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server plugin:tenantree:landscape and sign in.' }
     const lines = [`Signed in to tenantree as ${state.account ?? 'unknown'}.`]
     if (acc.status === 'signedIn' && acc.landscapes.length) lines.push('', 'Landscapes:', ...acc.landscapes.map(o => `  ${o.name} (${o.role === 'admin' ? 'administrator' : 'user'})`))
     lines.push('', 'Available subaccounts:')
@@ -955,7 +1038,7 @@ export const register: Register = on => {
           const isOpen = Boolean(opened[id])
           const decided =
             p.status === 'decided'
-              ? `${p.decision === 'approve' ? (p.ok === false ? 'Approved, not carried out' : 'Approved and carried out') : 'Rejected. Nothing was changed.'}${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.`
+              ? `${p.decision !== 'approve' ? 'Rejected' : p.ok === false ? 'Approved, not carried out' : 'Approved and carried out by tenantree'}.${p.by || p.at ? ` Decision${p.by ? ` by ${p.by}` : ''}${p.at ? ` at ${time(p.at)}` : ''}.` : ''} ${p.decision !== 'approve' ? 'Nothing was changed.' : p.ok === false ? 'Carrying out failed; your AI agent reports the reason in the chat.' : 'Your AI agent reports the result in the chat.'}`
               : null
           return (
             <Box key={id} flexDirection="column" borderStyle="round" borderColor={p.status === 'open' && !expired ? 'suggestion' : undefined} paddingX={1}>
@@ -963,13 +1046,31 @@ export const register: Register = on => {
                 <Text bold>{p.title}</Text>
                 {p.level ? <Text dimColor>Write level: {LEVEL[p.level] ?? p.level}</Text> : null}
               </Box>
-              {p.target ? <Text dimColor>Target: {p.target}</Text> : null}
+              {/* TEN-744: the plan at a glance -- result, target and cost in one sentence; plans before TEN-744 name the target. */}
+              {p.summary ? <Text>{p.summary}</Text> : p.target ? <Text dimColor>Target: {p.target}</Text> : null}
               {p.cost && (open || p.status === 'checking') ? (
                 <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="warning" paddingX={1}>
                   <Text color="warning" bold>{COST_TEXT.title}</Text>
                   <Text>{COST_TEXT.lead[p.cost.kind]}</Text>
                   {p.cost.text ? <Text dimColor>{p.cost.text}</Text> : null}
                   <Text dimColor>{COST_TEXT.confirm}</Text>
+                </Box>
+              ) : null}
+              {/* Warnings are never folded (TEN-744). */}
+              {p.warnings.length ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {p.warnings.map(w => <Text key={w} color="warning">{`Warning: ${w}`}</Text>)}
+                </Box>
+              ) : null}
+              {p.steps?.length ? (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text dimColor>{`Steps (${p.steps.length}), carried out in this order after one approval:`}</Text>
+                  {p.steps.map(s => (
+                    <Text key={`step-${s.n}`}>
+                      {`${s.n}. ${s.title}`}
+                      {s.irreversible ? <Text color="warning"> · Cannot be undone</Text> : null}
+                    </Text>
+                  ))}
                 </Box>
               ) : null}
               {open ? (
@@ -980,18 +1081,31 @@ export const register: Register = on => {
               ) : null}
               {expired ? <Text dimColor>Expired at {time(p.expiresAt)} unless decided before.</Text> : null}
               {decided ? <Text color={p.decision === 'approve' && p.ok !== false ? 'success' : p.ok === false ? 'error' : undefined} bold>{decided}</Text> : null}
-              {p.status === 'closed' ? <Text dimColor>This plan is no longer open (expired or superseded).</Text> : null}
+              {p.status === 'running' ? (
+                <Text color="success" bold>
+                  {p.sequence
+                    ? `Approved. tenantree is carrying out the plan sequence: ${p.sequence.done} of ${p.sequence.total} steps done.`
+                    : p.progress
+                      ? `Approved. tenantree is carrying out the plan. ${p.progress} …`
+                      : 'Approved. tenantree is carrying out the plan …'}
+                </Text>
+              ) : null}
+              {p.status === 'expired' ? <Text dimColor>This plan expired without a decision. Nothing was changed.</Text> : null}
+              {p.status === 'superseded' ? <Text dimColor>This plan was superseded by another plan with the same arguments. Nothing was changed by it.</Text> : null}
+              {p.status === 'interrupted' ? <Text color="warning">Approved, but the execution ended without a recorded result. The outcome is unknown; ask your AI agent to check the plan.</Text> : null}
+              {p.status === 'closed' ? <Text dimColor>This plan is no longer available.</Text> : null}
               {p.status === 'checking' ? <Text dimColor>Reading the status …</Text> : null}
               {p.status === 'unknown' ? <Text color="error">The status could not be read{p.error ? `: ${p.error}` : '.'}</Text> : null}
               {isOpen ? (
                 <Box flexDirection="column" marginTop={1}>
+                  {p.summary && p.headline ? <Text dimColor>{p.headline}</Text> : null}
+                  {p.summary && p.target ? <Text dimColor>Target: {p.target}</Text> : null}
                   {p.facts.length ? <Box flexDirection="column">{rows(p.facts)}</Box> : null}
                   {p.values.length ? <Box flexDirection="column" marginTop={1}><Text dimColor>Values</Text>{rows(p.values)}</Box> : null}
-                  {p.warnings.map(w => <Text key={w} color="warning">{w}</Text>)}
                 </Box>
               ) : null}
               <Box marginTop={1} gap={2} alignItems="center">
-                <Button key={`plan-${id}`} label={isOpen ? 'Hide plan' : 'Show plan'} onPress={() => void update($, expanded, all => ({ ...all, [id]: !isOpen }))} />
+                <Button key={`plan-${id}`} label={isOpen ? 'Hide technical details' : 'Show technical details'} onPress={() => void update($, expanded, all => ({ ...all, [id]: !isOpen }))} />
                 {p.url ? <Link href={p.url} label="Open the approval page" /> : null}
               </Box>
               {decided && p.first ? <Text dimColor>{p.first}</Text> : null}
@@ -1004,6 +1118,9 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+    // TEPLU-17: no band in a project where tenantree was never used; nothing is reported for it.
+    const here = await bandOf($, false)
+    if (!here.used) return next(e)
     const state = await read($, target)
     const now = await $.clock.now()
     const all = await read($, tiles)
@@ -1023,9 +1140,24 @@ export const register: Register = on => {
     void watchSignIn($).catch(() => {})
     // The picker needs the list of subaccounts; after a sign-in only the active target may be known.
     if (acc.status !== 'signedOut' && state.status === 'known' && !state.targets?.length) void loadTargets($).catch(() => {})
-    if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut') return next(e)
+    if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut' && !here.collapsed) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
+    // TEPLU-17: folded, the band keeps a badge that unfolds it, the production marker and the number of pending approvals.
+    if (here.collapsed) {
+      const production = state.status === 'known' && state.target?.kind === 'production'
+      const unsigned = acc.status === 'signedOut' || signinOpen || (state.status === 'known' && state.target && (!state.target.signedIn || state.target.right === 'none'))
+      return (
+        <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
+          <Button key="expand" label="Expand the tenantree band" onPress={() => void setBand($, { collapsed: false })}>
+            tenantree <Text dimColor>▸</Text>
+          </Button>
+          {production ? <Text color="error" bold>● Production</Text> : null}
+          {open.length ? <Text color="warning">◆ {open.length === 1 ? '1 approval pending' : `${open.length} approvals pending`}</Text> : null}
+          {unsigned ? <Text color="warning">◆ Sign-in required</Text> : null}
+        </Box>
+      )
+    }
     // The picker and the mark where the surface draws them (terminal: no Svg; mobile: no Select).
     const Select = 'Select' in els ? els.Select : null
     const Svg = 'Svg' in els ? els.Svg : null
@@ -1096,6 +1228,10 @@ export const register: Register = on => {
           </Box>
           <Box width={RIGHT} justifyContent="flex-end">
             <Box {...ROW} gap={1}>
+              {/* TEPLU-17: folds the band to its badge; the label names the control for a screen reader. */}
+              <Button key="collapse" label="Collapse the tenantree band" onPress={() => void setBand($, { collapsed: true })}>
+                ▾
+              </Button>
               {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
               {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
               <Link href={dashboard} label="tenantree" />
@@ -1105,7 +1241,7 @@ export const register: Register = on => {
         <Box {...ROW} justifyContent="space-between">
           <Box {...ROW}>
             {acc.status === 'signedOut' ? (
-              <Text dimColor>Sign in with /mcp → tenantree → Authenticate, then write: tenantree login</Text>
+              <Text dimColor>Sign in with /mcp → plugin:tenantree:landscape → Authenticate, then write: tenantree login</Text>
             ) : (
               <Box {...ROW} gap={0}>
                 <Box width={LABEL}>

@@ -49,12 +49,21 @@ export type PlanTile = {
   level: string | null
   target: string | null
   headline: string
+  /** TEN-744: the plan at a glance (result, target, cost) from the line "Summary:" of the plan answer; absent before TEN-744. */
+  summary?: string
+  /** TEN-744: the steps of a plan sequence as a short list (number, title, whether it can be undone). */
+  steps?: { n: number; title: string; irreversible: boolean }[]
   facts: Row[]
   values: Row[]
   warnings: string[]
   url: string | null
   expiresAt: number
-  status: 'open' | 'decided' | 'closed' | 'checking' | 'unknown'
+  /** TEN-742: running = approved and being carried out (or a plan sequence with steps to do); expired, superseded and interrupted (outcome unknown) named as such. */
+  status: 'open' | 'running' | 'decided' | 'expired' | 'superseded' | 'interrupted' | 'closed' | 'checking' | 'unknown'
+  /** The plan sequence of an approved sequence plan (TEN-742): its state and how many steps are done. */
+  sequence?: { status: string; done: number; total: number } | null
+  /** TEN-793: the step being carried out, as one line ("Step 2 of 3: Service key ..."), while the plan runs. */
+  progress?: string | null
   decision?: 'approve' | 'reject'
   by?: string | null
   ok?: boolean
@@ -82,6 +91,12 @@ export type DiagramTile = {
   url: string | null
 }
 
+/**
+ * TEPLU-17: the band in one project (the session's project root). used: tenantree was used there (a tenantree tool
+ * call, a chosen landscape, a sign-in or /tenantree); collapsed: the person folded the band to its badge.
+ */
+export type BandState = { project: string; used: boolean; collapsed: boolean }
+
 /** The tiles a reply shows after its text: the end of that text and the tiles' tool use ids. */
 export type Attached = { tail: string; ids: string[] }
 
@@ -100,6 +115,7 @@ declare module 'claude-code' {
       expanded: Record<string, boolean>
       costs: Record<string, CostTile>
       diagrams: Record<string, DiagramTile>
+      band: BandState | null
     }
   }
 }

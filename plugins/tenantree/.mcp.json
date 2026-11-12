@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "tenantree": {
+    "landscape": {
       "type": "http",
       "url": "https://portal.tenantree.de/mcp",
       "alwaysLoad": true
