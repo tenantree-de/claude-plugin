@@ -1149,7 +1149,7 @@ export const register: Register = on => {
       const unsigned = acc.status === 'signedOut' || signinOpen || (state.status === 'known' && state.target && (!state.target.signedIn || state.target.right === 'none'))
       return (
         <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
-          <Button key="expand" label="Expand the tenantree band" onPress={() => void setBand($, { collapsed: false })}>
+          <Button key="expand" onPress={() => void setBand($, { collapsed: false })}>
             tenantree <Text dimColor>▸</Text>
           </Button>
           {production ? <Text color="error" bold>● Production</Text> : null}
@@ -1207,16 +1207,26 @@ export const register: Register = on => {
     // address when it names one, else built from the chosen entry of the picker, else the portal.
     const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
     const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
-    // LAYOUT (operator, 17.10.2026, after his sketch): a header of two rows -- the subaccount left and the
-    // mark right, below it the account left and Sign out right under the mark -- then one row per notice
-    // (IAS sign-in, approvals, errors). Fixed widths for labels and the right column keep everything aligned.
+    // LAYOUT (operator, 12.11.2026): three columns of two rows. Left the controls -- the fold button above, the
+    // refresh button below; in the middle the subaccount above and the account below; right the mark above and
+    // Sign in or Sign out below. Then one row per notice (IAS sign-in, approvals, errors).
     const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
+    const COL = { flexDirection: 'column' as const, gap: 1 }
     const LABEL = 14
-    const RIGHT = 22
     return (
       <Box flexDirection="column" gap={1} paddingY={1} paddingX={1}>
-        <Box {...ROW} justifyContent="space-between">
-          <Box {...ROW}>
+        <Box {...ROW} alignItems="flex-start">
+          <Box {...COL} alignItems="center">
+            {/* TEPLU-17: folds the band to its badge. Children, not label: the label would be drawn as text. */}
+            <Button key="collapse" onPress={() => void setBand($, { collapsed: true })}>
+              ▾
+            </Button>
+            {/* TEPLU-14: reads account, subaccount and approvals again. */}
+            <Button key="refresh" onPress={() => void refreshAll($)}>
+              ↻
+            </Button>
+          </Box>
+          <Box {...COL} flexGrow={1}>
             {acc.status === 'signedOut' ? (
               <Text color="warning" bold>◆ Not signed in to tenantree</Text>
             ) : (
@@ -1225,21 +1235,6 @@ export const register: Register = on => {
                 {picker}
               </Box>
             )}
-          </Box>
-          <Box width={RIGHT} justifyContent="flex-end">
-            <Box {...ROW} gap={1}>
-              {/* TEPLU-17: folds the band to its badge; the label names the control for a screen reader. */}
-              <Button key="collapse" label="Collapse the tenantree band" onPress={() => void setBand($, { collapsed: true })}>
-                ▾
-              </Button>
-              {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
-              {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
-              <Link href={dashboard} label="tenantree" />
-            </Box>
-          </Box>
-        </Box>
-        <Box {...ROW} justifyContent="space-between">
-          <Box {...ROW}>
             {acc.status === 'signedOut' ? (
               <Text dimColor>Sign in with /mcp → plugin:tenantree:BTP-Connector → Authenticate, then write: tenantree login</Text>
             ) : (
@@ -1251,16 +1246,17 @@ export const register: Register = on => {
               </Box>
             )}
           </Box>
-          <Box width={RIGHT} justifyContent="flex-end">
-            {/* TEPLU-14 (operator, 11.11.2026): the refresh button sits next to Sign in or Sign out, not at the mark. */}
+          <Box {...COL} alignItems="flex-end">
+            {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
             <Box {...ROW} gap={1}>
-              <Button key="refresh" label="↻" onPress={() => void refreshAll($)} />
-              {acc.status === 'signedOut' ? (
-                <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-              ) : email ? (
-                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-              ) : null}
+              {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
+              <Link href={dashboard} label="tenantree" />
             </Box>
+            {acc.status === 'signedOut' ? (
+              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+            ) : email ? (
+              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+            ) : null}
           </Box>
         </Box>
         {note ? (

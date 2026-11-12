@@ -43,7 +43,7 @@ test('TEPLU-17: no band in a project without tenantree; the first tenantree tool
   await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
   const shown = JSON.stringify(await band.drawn())
   expect(shown).toContain('person@example.test')
-  expect(shown).toContain('Collapse the tenantree band')
+  expect(shown).toContain('"key":"collapse"')
   expect(store.get('band:/projects/a')).toEqual({ used: true, collapsed: false })
 })
 
@@ -57,7 +57,7 @@ test('TEPLU-17: the band folds to a badge and unfolds; the state is kept per pro
 
   await band.press({ key: 'collapse' } as never)
   const folded = JSON.stringify(await band.drawn())
-  expect(folded).toContain('Expand the tenantree band')
+  expect(folded).toContain('"key":"expand"')
   expect(folded).not.toContain('person@example.test')
   expect(store.get('band:/projects/a')).toEqual({ used: true, collapsed: true })
 
@@ -82,8 +82,8 @@ test('TEPLU-17: a folded band shows its badge at once after a restart', async ($
   await $.session.start({ cwd: '/projects/a', surface: 'terminal', isInteractive: true } as never)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as never)
   const drawn = JSON.stringify(await band.drawn())
-  expect(drawn).toContain('Expand the tenantree band')
-  expect(drawn).not.toContain('Collapse the tenantree band')
+  expect(drawn).toContain('"key":"expand"')
+  expect(drawn).not.toContain('"key":"collapse"')
 })
 
 test('TEPLU-17: /tenantree shows the band, expanded, in a project without tenantree use', async ($, on) => {
@@ -94,7 +94,7 @@ test('TEPLU-17: /tenantree shows the band, expanded, in a project without tenant
   expect(JSON.stringify(await band.drawn())).toContain('ENGINE')
   await $.command.run({ command: 'tenantree', args: '' } as never)
   const shown = JSON.stringify(await band.drawn())
-  expect(shown).toContain('Collapse the tenantree band')
+  expect(shown).toContain('"key":"collapse"')
   expect(shown).toContain('person@example.test')
   expect(store.get('band:/projects/c')).toEqual({ used: true, collapsed: false })
 })
@@ -111,7 +111,7 @@ test('TEPLU-17: the folded badge keeps the production marker, pending approvals 
   await $.tool.call({ tool: `${P}eventmesh_queue_create`, tool_use_id: 'toolu_plan' } as never)
   const band = await $.ui.mount(BAND as never)
   const drawn = JSON.stringify(await band.drawn())
-  expect(drawn).toContain('Expand the tenantree band')
+  expect(drawn).toContain('"key":"expand"')
   expect(drawn).toContain('Production')
   expect(drawn).toContain('1 approval pending')
   expect(drawn).toContain('Sign-in required')
