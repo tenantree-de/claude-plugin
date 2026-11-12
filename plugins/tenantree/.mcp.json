@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "landscape": {
+    "BTP-Connector": {
       "type": "http",
       "url": "https://portal.tenantree.de/mcp",
       "alwaysLoad": true

@@ -43,9 +43,9 @@ const account = atom({ plugin: 'tenantree', key: 'account' } as const, { status:
 const band = atom({ plugin: 'tenantree', key: 'band' } as const, null as BandState | null)
 const BAND_KEY = 'band:'
 
-const PREFIX = 'mcp__plugin_tenantree_landscape__'
+const PREFIX = 'mcp__plugin_tenantree_BTP-Connector__'
 const PORTAL = 'https://portal.tenantree.de'
-const TENANTREE_TOOL = /^mcp__plugin_tenantree_landscape__([a-z0-9_]+)$/
+const TENANTREE_TOOL = /^mcp__plugin_tenantree_BTP-Connector__([a-z0-9_]+)$/
 const PLAN_LINK = /https:\/\/[^\s"<>\\]+\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
 const SIGNIN_LINK = /https:\/\/[^\s"<>\\]+\/sso\/start\/[A-Za-z0-9_-]+/
 const SIGNIN_MS = 10 * 60 * 1000
@@ -467,9 +467,9 @@ async function keep($: EngineInterface) {
 
 async function serverOf($: EngineInterface): Promise<string | null> {
   const known = await read($, server)
-  // TEPLU-18: a name cached before the server key changed from "tenantree" to "landscape" is not reused.
-  if (known && known.endsWith(':landscape')) return known
-  const connected = await $.mcp.connect('landscape')
+  // TEPLU-18: a name cached before the server key changed to "BTP-Connector" (from "tenantree", then "landscape") is not reused.
+  if (known && known.endsWith(':BTP-Connector')) return known
+  const connected = await $.mcp.connect('BTP-Connector')
   if (!connected.isConnected) {
     // The server asks for a sign-in: the band offers it (TEPLU-12).
     if (connected.reason === 'auth') {
@@ -663,7 +663,7 @@ const AUTO_BLOCKED = 'The Auto permission mode blocks this action. Please switch
 const blockedByAuto = (err: unknown) => /auto mode|classifier|no verdict|permission/i.test(String((err as Error)?.message ?? err))
 
 const LOGIN_CONTEXT =
-  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one subaccount is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select plugin:tenantree:landscape and choose Authenticate, then to write "tenantree login" again.'
+  'The person wrote "tenantree login". 1) Call tenantree_landscape_query. 2) If there is no active target and exactly one subaccount is listed, set it with tenantree_landscape_use (the person agreed to this for the single-system case); if several are listed, ask which one. 3) If the person is not signed in at the IAS of the active target, call tenantree_landscape_signin and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run /mcp, select plugin:tenantree:BTP-Connector and choose Authenticate, then to write "tenantree login" again.'
 const SIGNOUT_PROMPT = 'Sign me out of tenantree.'
 // German as well (TEPLU-13): \"Melde mich bei tenantree ab\", \"Bei tenantree abmelden\", \"tenantree abmelden\".
 const ASKS_SIGNOUT = /\bsign (?:me )?out\b.*\btenantree\b|\btenantree\b.*\bsign (?:me )?out\b|\bmelde?\b.*\btenantree\b.*\bab\b|\babmelden\b.*\btenantree\b|\btenantree\b.*\babmelden\b/i
@@ -699,7 +699,7 @@ const WATCH_MS = 5000
 let wasConnected = true
 async function checkSignIn($: EngineInterface) {
   lastWatch = await $.clock.now()
-  const c = await $.mcp.connect('landscape').catch(() => null)
+  const c = await $.mcp.connect('BTP-Connector').catch(() => null)
   const before = wasConnected
   wasConnected = Boolean(c?.isConnected)
   if (!c?.isConnected) return
@@ -739,7 +739,7 @@ async function signedOut($: EngineInterface) {
 /** THE PERSON SIGNS IN: Claude Code holds the OAuth sign-in; connecting starts it where the host can. */
 async function signIn($: EngineInterface) {
   await update($, message, () => 'Connecting to tenantree …')
-  const connected = await $.mcp.connect('landscape').catch(() => null)
+  const connected = await $.mcp.connect('BTP-Connector').catch(() => null)
   if (connected?.isConnected) {
     await update($, server, () => connected.server)
     await refresh($).catch(() => {})
@@ -752,10 +752,10 @@ async function signIn($: EngineInterface) {
   await update($, message, () => (filled?.isFilled ? SIGNIN_READY : SIGNIN_HELP))
 }
 const SIGNIN_NOTES = ['/mcp is in the prompt box', 'To sign in,', 'Connecting to tenantree']
-const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select plugin:tenantree:landscape and choose Authenticate. Afterwards write: tenantree login'
+const SIGNIN_READY = '/mcp is in the prompt box: press Enter, select plugin:tenantree:BTP-Connector and choose Authenticate. Afterwards write: tenantree login'
 let lastStatus = 0
 const STATUS_MS = 30_000
-const SIGNIN_HELP = 'To sign in, run /mcp, select plugin:tenantree:landscape and choose Authenticate. Afterwards write: tenantree login'
+const SIGNIN_HELP = 'To sign in, run /mcp, select plugin:tenantree:BTP-Connector and choose Authenticate. Afterwards write: tenantree login'
 
 const path = (t: { landscape: string; globalAccount: string; subaccount: string }) => `${t.landscape} → ${t.globalAccount} → ${t.subaccount}`
 /**
@@ -933,7 +933,7 @@ export const register: Register = on => {
     const state = await read($, target)
     const acc = await read($, account)
     if (acc.status === 'signedOut') return { text: `Not signed in to tenantree. ${SIGNIN_HELP}` }
-    if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server plugin:tenantree:landscape and sign in.' }
+    if (state.status === 'unknown') return { text: 'tenantree is not connected in this session. Run /mcp, select the server plugin:tenantree:BTP-Connector and sign in.' }
     const lines = [`Signed in to tenantree as ${state.account ?? 'unknown'}.`]
     if (acc.status === 'signedIn' && acc.landscapes.length) lines.push('', 'Landscapes:', ...acc.landscapes.map(o => `  ${o.name} (${o.role === 'admin' ? 'administrator' : 'user'})`))
     lines.push('', 'Available subaccounts:')
@@ -1241,7 +1241,7 @@ export const register: Register = on => {
         <Box {...ROW} justifyContent="space-between">
           <Box {...ROW}>
             {acc.status === 'signedOut' ? (
-              <Text dimColor>Sign in with /mcp → plugin:tenantree:landscape → Authenticate, then write: tenantree login</Text>
+              <Text dimColor>Sign in with /mcp → plugin:tenantree:BTP-Connector → Authenticate, then write: tenantree login</Text>
             ) : (
               <Box {...ROW} gap={0}>
                 <Box width={LABEL}>

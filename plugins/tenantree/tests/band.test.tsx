@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-const P = 'mcp__plugin_tenantree_landscape__'
+const P = 'mcp__plugin_tenantree_BTP-Connector__'
 const LIST = JSON.stringify({
   message: 'Landscapes',
   signedInAs: 'person@example.test',
@@ -14,7 +14,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], root: string | ((
   on('clock.now', async () => ({ value: 1_000_000 }) as never)
   on('clock.every', async () => ({ value: { cancel: () => {} } }) as never)
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: read() }], isError: false } }) as never)
   on('command.register', async () => ({ value: { command: 'tenantree' } }) as never)
   on('session.start', async (_$, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)

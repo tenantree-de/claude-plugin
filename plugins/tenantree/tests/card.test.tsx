@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 const PLAN = '3b7ba663-0c63-4f5a-b804-c5dc3f693b4a'
-const TOOL = 'mcp__plugin_tenantree_landscape__cpi_runtimeartifact_delete'
+const TOOL = 'mcp__plugin_tenantree_BTP-Connector__cpi_runtimeartifact_delete'
 const URL = `https://portal.tenantree.de/t/x/plan/${PLAN}`
 const TEXT = [
   'Planned, not executed yet.',
@@ -72,7 +72,7 @@ test('even with a code in the plugin channel the tile decides nothing and leads 
 test('the tile learns by itself that its plan was approved on the page', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Undeployed.' }) }], isError: false } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
@@ -93,7 +93,7 @@ for (const [decision, expected] of [['approve', ['freigegeben']], ['reject', []]
     const suggested: string[] = []
     on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
     on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-    on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+    on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
     on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision, by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' }) }], isError: false } }) as never)
     on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
     on('turn.complete', async () => ({ text: '' }) as never)
@@ -110,7 +110,7 @@ test('TEN-742: no proposal when the agent already waits on the plan with tenantr
   const suggested: string[] = []
   on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', state: 'approved', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' }) }], isError: false } }) as never)
   on('tool.call', async (_$, e) => {
     const t = String((e as { tool?: string }).tool).endsWith('tenantree_plan_wait') ? 'Plan status: approved and carried out.\nResult: Done.' : TEXT
@@ -119,7 +119,7 @@ test('TEN-742: no proposal when the agent already waits on the plan with tenantr
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_w_1', id: 'Tenantree_Demo_iFlow_X' } as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_plan_wait', tool_use_id: 'toolu_w_2', planId: PLAN } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_plan_wait', tool_use_id: 'toolu_w_2', planId: PLAN } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 'tw', reason: 'answer', category: null } as never)
   await clock.advance(6000)
   expect(suggested).toEqual([])
@@ -130,7 +130,7 @@ test('TEPLU-15: with two open plans an approval proposes nothing', async ($, on)
   const suggested: string[] = []
   on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   let calls = 0
   on('mcp.call', async () => {
     calls++
@@ -152,7 +152,7 @@ test('TEPLU-15: with two open plans an approval proposes nothing', async ($, on)
 test('TEPLU-14: the band shows the refresh button, which reads the plan state again at once', async ($, on) => {
   mock.clock(on, { now: 1_000_000 })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   const called: string[] = []
   on('mcp.call', async (_$, e) => {
     const tool = (e as { tool?: string; name?: string }).tool ?? (e as { name?: string }).name ?? ''
@@ -176,7 +176,7 @@ test('TEPLU-14: the band shows the refresh button, which reads the plan state ag
 test('TEN-754: an approved plan whose execution failed reads Approved, not carried out', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', decision: 'approve', by: 'ada@example.com', ok: false, at: 1_000_500, first: 'Not carried out: SAP answered 400.' }) }], isError: false } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
@@ -196,7 +196,7 @@ const stateTile = async ($: any, on: any, answers: object[], polls: number) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   let n = 0
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify(answers[Math.min(n++, answers.length - 1)]) }], isError: false } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
@@ -270,7 +270,7 @@ test('the cost assessment becomes a tile after the reply', async ($, on) => {
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: COST }], text: COST }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_cost_query', tool_use_id: 'toolu_c' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_cost_query', tool_use_id: 'toolu_c' } as never)
   await $.turn.complete?.({ answer: 'Here are the costs.', durationMs: 1, isAborted: false, turnId: 'tc', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Here are the costs.', isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
@@ -310,7 +310,7 @@ test('in the terminal the landscape diagram becomes a tile with heading and find
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: DIAGRAM }], text: DIAGRAM }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_diagram_read', tool_use_id: 'toolu_d', kind: 'tenant' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_diagram_read', tool_use_id: 'toolu_d', kind: 'tenant' } as never)
   await $.turn.complete?.({ answer: 'Here is the landscape.', durationMs: 1, isAborted: false, turnId: 'td', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Here is the landscape.', isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())
@@ -351,7 +351,7 @@ test('in the desktop app the mod draws the diagram tile (no MCP App views any mo
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TENANT }], text: TENANT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_diagram_read', tool_use_id: 'toolu_t', kind: 'tenant' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_diagram_read', tool_use_id: 'toolu_t', kind: 'tenant' } as never)
   await $.turn.complete?.({ answer: 'The tenant landscape.', durationMs: 1, isAborted: false, turnId: 'tt', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AssistantMessage', props: { text: 'The tenant landscape.', isFirstOfReply: true } } as never)
   expect(JSON.stringify(await reply.drawn())).toContain('ENGINE')
@@ -369,7 +369,7 @@ test('times show SAP BTP time (UTC) and the person\'s zone from the profile (TEP
       : { ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_profile_read', tool_use_id: 'toolu_p' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_profile_read', tool_use_id: 'toolu_p' } as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_3', id: 'Tenantree_Demo_iFlow_X' } as never)
   const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
   // 1 000 000 ms + 15 minutes = 00:31 UTC on 01.01.1970, 01:31 in Berlin (winter time).
@@ -387,9 +387,9 @@ test('a global account renamed in the portal reaches the picker with the next an
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: answer }], text: answer }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_landscape_query', tool_use_id: 'toolu_l' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_landscape_query', tool_use_id: 'toolu_l' } as never)
   answer = ACCESS
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_access_read', tool_use_id: 'toolu_a' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_access_read', tool_use_id: 'toolu_a' } as never)
   const band = await $.ui.mount({ plugin: 'tenantree', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 120 } } as never)
   const json = JSON.stringify(await band.drawn())
   expect(json).toContain('BICS BTP')
@@ -412,7 +412,7 @@ test('in the desktop app the plan tile is drawn, because the view of a plugin se
 test('TEN-742: a plan interrupted during its execution reads outcome unknown', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'closed', state: 'interrupted' }) }], isError: false } }) as never)
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: TEXT }], text: TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
@@ -429,7 +429,7 @@ test('TEN-742: a wait that returned with the plan still open does not suppress t
   const suggested: string[] = []
   on('prompt.suggest', async (_$, e) => { suggested.push((e as { text: string }).text); return { isShown: true } as never })
   on('ui.render', async () => ({ type: 'Text', props: {}, children: ['ENGINE'] }) as never)
-  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:landscape' } }) as never)
+  on('mcp.connect', async () => ({ value: { isConnected: true, server: 'plugin:tenantree:BTP-Connector' } }) as never)
   on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: JSON.stringify({ status: 'decided', state: 'approved', decision: 'approve', by: 'ada@example.com', ok: true, at: 1_000_500, first: 'Done.' }) }], isError: false } }) as never)
   on('tool.call', async (_$, e) => {
     const t = String((e as { tool?: string }).tool).endsWith('tenantree_plan_wait') ? 'Plan status: open -- not decided yet.' : TEXT
@@ -438,7 +438,7 @@ test('TEN-742: a wait that returned with the plan still open does not suppress t
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
   await $.tool.call({ tool: TOOL, tool_use_id: 'toolu_wo_1', id: 'X' } as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_plan_wait', tool_use_id: 'toolu_wo_2', planId: PLAN } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_plan_wait', tool_use_id: 'toolu_wo_2', planId: PLAN } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 'two', reason: 'answer', category: null } as never)
   await clock.advance(6000)
   expect(suggested).toEqual(['freigegeben'])
@@ -476,7 +476,7 @@ test('a plan sequence reads at a glance: summary, short step list, warnings alwa
   on('tool.call', async () => ({ ref: 1, result: [{ type: 'text', text: SEQ_TEXT }], text: SEQ_TEXT }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   on('session.messages', async () => ({ value: [] }) as never)
-  await $.tool.call({ tool: 'mcp__plugin_tenantree_landscape__tenantree_plansequence_create', tool_use_id: 'toolu_s' } as never)
+  await $.tool.call({ tool: 'mcp__plugin_tenantree_BTP-Connector__tenantree_plansequence_create', tool_use_id: 'toolu_s' } as never)
   await $.turn.complete?.({ answer: ANSWER, durationMs: 1, isAborted: false, turnId: 'ts', reason: 'answer', category: null } as never)
   const reply = await $.ui.mount({ plugin: 'tenantree', surface: 'terminal', component: 'AssistantMessage', props: { text: ANSWER, isFirstOfReply: true } } as never)
   const tile = JSON.stringify(await reply.drawn())

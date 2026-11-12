@@ -5,7 +5,7 @@ description: Use when the person works with SAP BTP landscapes through tenantree
 
 # Working with tenantree
 
-tenantree connects you to the SAP BTP subaccounts the person is assigned to in the Tenantree-Portal (https://portal.tenantree.de). The structure is Landscape (the customer's top level in tenantree) → Global Account (SAP BTP) → Subaccount; the tool parameters name them `landscape`, `globalAccount` and `subaccount`. The tools of the MCP server `plugin:tenantree:landscape` are the only way to act on these subaccounts.
+tenantree connects you to the SAP BTP subaccounts the person is assigned to in the Tenantree-Portal (https://portal.tenantree.de). The structure is Landscape (the customer's top level in tenantree) → Global Account (SAP BTP) → Subaccount; the tool parameters name them `landscape`, `globalAccount` and `subaccount`. The tools of the MCP server `plugin:tenantree:BTP-Connector` are the only way to act on these subaccounts.
 
 Two views of global accounts and subaccounts, and which tool answers which question:
 
@@ -25,7 +25,7 @@ Two views of global accounts and subaccounts, and which tool answers which quest
 - Production subaccounts: before any change, name the subaccount and ask for an explicit confirmation, even if the person has already approved similar changes on other subaccounts.
 - The rights come from the customer's SAP Cloud Identity Services and SAP BTP. If tenantree reports "read" or "no access", do not look for workarounds; explain which IAS group or role is missing and that an administrator of the customer assigns it.
 - Never ask for passwords, client secrets or service keys in the chat. Secrets are exchanged only through the one-time links tenantree provides.
-- If the sign-in at tenantree itself fails, the person runs `/mcp`, selects the server `plugin:tenantree:landscape` and signs in again.
+- If the sign-in at tenantree itself fails, the person runs `/mcp`, selects the server `plugin:tenantree:BTP-Connector` and signs in again.
 
 ## Service keys
 
@@ -36,5 +36,5 @@ Two views of global accounts and subaccounts, and which tool answers which quest
 
 ## Account commands in the chat
 
-- "tenantree login": call `tenantree_landscape_query`. If there is no active target and exactly one subaccount is listed, set it with `tenantree_landscape_use` (agreed for the single-subaccount case); with several, ask which one. If the person is not signed in at the IAS of the active target, call `tenantree_landscape_signin` and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run `/mcp`, select `plugin:tenantree:landscape` and choose Authenticate, then to write "tenantree login" again.
+- "tenantree login": call `tenantree_landscape_query`. If there is no active target and exactly one subaccount is listed, set it with `tenantree_landscape_use` (agreed for the single-subaccount case); with several, ask which one. If the person is not signed in at the IAS of the active target, call `tenantree_landscape_signin` and give the link. Answer briefly: account, active target, IAS sign-in state. If the tenantree tools are not available, tell the person to run `/mcp`, select `plugin:tenantree:BTP-Connector` and choose Authenticate, then to write "tenantree login" again.
 - "tenantree logout" or "Sign me out of tenantree": call `tenantree_session_delete` once and confirm in one sentence.
