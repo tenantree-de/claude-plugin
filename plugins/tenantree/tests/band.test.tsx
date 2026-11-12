@@ -131,3 +131,62 @@ test('TEPLU-17: a change of the project root while drawing reads the new project
   expect(JSON.stringify(await again.drawn())).toContain('ENGINE')
   expect(store.has('band:/projects/b')).toBe(false)
 })
+
+type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+/** Every element of a drawn tree, each with the element that holds it. */
+function elements(tree: unknown, parent: Node | null = null, out: Array<{ node: Node; parent: Node | null }> = []) {
+  if (Array.isArray(tree)) for (const child of tree) elements(child, parent, out)
+  else if (tree && typeof tree === 'object') {
+    const node = tree as Node
+    out.push({ node, parent })
+    elements(node.children ?? [], node, out)
+  }
+  return out
+}
+const slotOf = (tree: unknown, key: string) => elements(tree).find(x => x.node.type === 'Button' && x.node.props?.key === key)?.parent?.props
+
+test('TEPLU-17: the fold, unfold and refresh buttons sit in slots of one width that stretch them', async ($, on) => {
+  const store = new Map<string, unknown>([['band:/projects/a', { used: true, collapsed: false }]])
+  engine(on, '/projects/a', store)
+  await $.session.start({ cwd: '/projects/a', surface: 'desktop', isInteractive: true } as never)
+  await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
+  const band = await $.ui.mount(BAND as never)
+  const shown = await band.drawn()
+  const collapse = slotOf(shown, 'collapse')
+  const refresh = slotOf(shown, 'refresh')
+  expect(typeof collapse?.width).toBe('number')
+  expect(collapse?.alignItems).toBe('stretch')
+  expect(refresh).toEqual(collapse)
+
+  await band.press({ key: 'collapse' } as never)
+  expect(slotOf(await band.drawn(), 'expand')).toEqual(collapse)
+})
+
+test('TEPLU-17: the folded band shows the mark, the name and the chosen subaccount', async ($, on) => {
+  const store = new Map<string, unknown>([['band:/projects/a', { used: true, collapsed: true }]])
+  engine(on, '/projects/a', store)
+  await $.session.start({ cwd: '/projects/a', surface: 'desktop', isInteractive: true } as never)
+  await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
+  const band = await $.ui.mount(BAND as never)
+  const folded = await band.drawn()
+  const mark = elements(folded).find(x => x.node.type === 'Svg')?.node.props
+  expect(mark?.alt).toBe('tenantree')
+  expect(mark?.width).toBe(mark?.height)
+  const text = JSON.stringify(folded)
+  expect(text).toContain('"type":"Link"')
+  expect(text).toContain('tenantree')
+  expect(text).toContain('Labor')
+  expect(text).not.toContain('"key":"refresh"')
+})
+
+test('TEPLU-17: on the terminal the folded band names tenantree without the mark', async ($, on) => {
+  const store = new Map<string, unknown>([['band:/projects/a', { used: true, collapsed: true }]])
+  engine(on, '/projects/a', store)
+  await $.session.start({ cwd: '/projects/a', surface: 'terminal', isInteractive: true } as never)
+  await $.tool.call({ tool: `${P}tenantree_landscape_query`, tool_use_id: 'toolu_q' } as never)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as never)
+  const folded = JSON.stringify(await band.drawn())
+  expect(folded).not.toContain('"type":"Svg"')
+  expect(folded).toContain('tenantree')
+  expect(folded).toContain('"key":"expand"')
+})

@@ -56,9 +56,15 @@ const PLAN_MS = 15 * 60 * 1000
 const KIND: Record<ActiveTarget['kind'], string> = { production: 'Production', quality: 'Quality', development: 'Development', other: 'Other' }
 // TEN-729: the write levels as people read them; the keys stay the internal values of the server.
 const LEVEL: Record<string, string> = { structure: 'Subaccount: structure (no endpoints)', landscape: 'Subaccount: endpoints', account: 'Global Account' }
-// The tenantree mark (Logo E) for dark surfaces.
+// The tenantree mark (Logo E). The stem is white for dark surfaces; under a light appearance the embedded
+// <style> draws it in the navy of the light logo (as diagramSvg does: an SVG drawn as an image evaluates
+// prefers-color-scheme against the app's appearance). Should a surface drop the <style>, the mark is as before.
 const MARK =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-84 -38 780 780"><g transform="matrix(1.05 0 0 1.05 -0.7 -36)"><path fill="#05A4A0" d="M320 470 Q300 214 556 190 Q576 446 320 470Z"/><rect fill="#FFFFFF" x="224" y="80" width="137" height="640"/><rect fill="#0078CF" x="14" y="20" width="556" height="125"/></g></svg>'
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-84 -38 780 780"><style>@media (prefers-color-scheme: light){.stem{fill:#00203A}}</style><g transform="matrix(1.05 0 0 1.05 -0.7 -36)"><path fill="#05A4A0" d="M320 470 Q300 214 556 190 Q576 446 320 470Z"/><rect class="stem" fill="#FFFFFF" x="224" y="80" width="137" height="640"/><rect fill="#0078CF" x="14" y="20" width="556" height="125"/></g></svg>'
+// The band's icon buttons (fold, unfold, refresh) share one slot: a column of this many cells that stretches its
+// Button, so each is as wide as the others whatever its glyph. On the terminal `[ x ]` is exactly these cells.
+const CONTROL = 5
+const MARK_PX = 18
 
 const textOf = (r: unknown): string => {
   if (typeof r === 'string') return r
@@ -1143,27 +1149,48 @@ export const register: Register = on => {
     if (state.status === 'unknown' && !open.length && !signinOpen && acc.status !== 'signedOut' && !here.collapsed) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text, Link, Button } = els
-    // TEPLU-17: folded, the band keeps a badge that unfolds it, the production marker and the number of pending approvals.
+    // The mark where the surface draws it (terminal: no Svg). It always opens the Tenantree Dashboard of the chosen
+    // subaccount (operator, 17.10.2026): the server's address when it names one, else built from the chosen entry
+    // of the picker, else the portal.
+    const Svg = 'Svg' in els ? els.Svg : null
+    const t = state.status === 'known' ? state.target : null
+    const targets = state.status === 'known' ? state.targets ?? [] : []
+    const active = targets.find(x => x.active)
+    const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
+    const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
+    const brand = (
+      <Box {...ROW} gap={1} flexShrink={0}>
+        {Svg ? <Svg source={MARK} alt="tenantree" width={MARK_PX} height={MARK_PX} /> : null}
+        <Link href={dashboard}>
+          <Text bold>tenantree</Text>
+        </Link>
+      </Box>
+    )
+    // One slot for every icon button. Children, not label: the desktop app would draw the label as text.
+    const control = (key: string, glyph: string, onPress: () => void) => (
+      <Box width={CONTROL} flexDirection="column" alignItems="stretch" flexShrink={0}>
+        <Button key={key} onPress={onPress}>
+          {glyph}
+        </Button>
+      </Box>
+    )
+    // TEPLU-17: folded, the band is one row: the button that unfolds it (where the fold button sits when unfolded),
+    // the mark with the name, the chosen subaccount, the production marker and what needs attention.
     if (here.collapsed) {
-      const production = state.status === 'known' && state.target?.kind === 'production'
-      const unsigned = acc.status === 'signedOut' || signinOpen || (state.status === 'known' && state.target && (!state.target.signedIn || state.target.right === 'none'))
+      const unsigned = acc.status === 'signedOut' || signinOpen || (t && (!t.signedIn || t.right === 'none'))
       return (
-        <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
-          <Button key="expand" onPress={() => void setBand($, { collapsed: false })}>
-            tenantree <Text dimColor>▸</Text>
-          </Button>
-          {production ? <Text color="error" bold>● Production</Text> : null}
+        <Box {...ROW} paddingX={1}>
+          {control('expand', '▸', () => void setBand($, { collapsed: false }))}
+          {brand}
+          {t?.kind === 'production' ? <Text color="error" bold>● Production</Text> : null}
+          {t ? <Text dimColor wrap="truncate-end">{path(t)}</Text> : null}
           {open.length ? <Text color="warning">◆ {open.length === 1 ? '1 approval pending' : `${open.length} approvals pending`}</Text> : null}
           {unsigned ? <Text color="warning">◆ Sign-in required</Text> : null}
         </Box>
       )
     }
-    // The picker and the mark where the surface draws them (terminal: no Svg; mobile: no Select).
+    // The picker where the surface draws it (mobile: no Select).
     const Select = 'Select' in els ? els.Select : null
-    const Svg = 'Svg' in els ? els.Svg : null
-    const t = state.status === 'known' ? state.target : null
-    const targets = state.status === 'known' ? state.targets ?? [] : []
-    const active = targets.find(x => x.active)
     const note = await read($, message)
     const choose = async (id: string) => {
       if (id === active?.id) return
@@ -1203,60 +1230,49 @@ export const register: Register = on => {
         <Text bold>{t ? path(t) : 'No subaccount chosen'}</Text>
       )
     const notAdmitted = state.status === 'known' && t && (!t.signedIn || t.right === 'none')
-    // The mark always opens the Tenantree Dashboard of the chosen subaccount (operator, 17.10.2026); the server's
-    // address when it names one, else built from the chosen entry of the picker, else the portal.
-    const dashboard = t?.dashboardUrl ?? (active ? `${PORTAL}/t/${active.id}/dashboard/` : `${PORTAL}/`)
     const email = acc.status === 'signedIn' ? acc.email : state.status === 'known' ? state.account ?? null : null
     // LAYOUT (operator, 12.11.2026): three columns of two rows. Left the controls -- the fold button above, the
     // refresh button below; in the middle the subaccount above and the account below; right the mark above and
-    // Sign in or Sign out below. Then one row per notice (IAS sign-in, approvals, errors).
-    const ROW = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 2 }
-    const COL = { flexDirection: 'column' as const, gap: 1 }
-    const LABEL = 14
+    // Sign in or Sign out below. Built as two rows of three cells, so what stands side by side shares one centre
+    // line whatever the heights of a button, a picker and a line of text; the left cells have one width and the
+    // right cells end at the band's edge, which keeps the columns. Then one row per notice (IAS sign-in,
+    // approvals, errors).
+    const END = { ...ROW, gap: 1, justifyContent: 'flex-end' as const, flexShrink: 0 }
     return (
       <Box flexDirection="column" gap={1} paddingY={1} paddingX={1}>
-        <Box {...ROW} alignItems="flex-start">
-          <Box {...COL} alignItems="center">
-            {/* TEPLU-17: folds the band to its badge. Children, not label: the label would be drawn as text. */}
-            <Button key="collapse" onPress={() => void setBand($, { collapsed: true })}>
-              ▾
-            </Button>
-            {/* TEPLU-14: reads account, subaccount and approvals again. */}
-            <Button key="refresh" onPress={() => void refreshAll($)}>
-              ↻
-            </Button>
-          </Box>
-          <Box {...COL} flexGrow={1}>
-            {acc.status === 'signedOut' ? (
-              <Text color="warning" bold>◆ Not signed in to tenantree</Text>
-            ) : (
-              <Box {...ROW}>
-                {isProduction ? <Text color="error" bold>● Production</Text> : null}
-                {picker}
-              </Box>
-            )}
-            {acc.status === 'signedOut' ? (
-              <Text dimColor>Sign in with /mcp → plugin:tenantree:BTP-Connector → Authenticate, then write: tenantree login</Text>
-            ) : (
-              <Box {...ROW} gap={0}>
-                <Box width={LABEL}>
-                  <Text dimColor>Signed in as</Text>
-                </Box>
-                <Text>{email ?? 'Reading the account …'}</Text>
-              </Box>
-            )}
-          </Box>
-          <Box {...COL} alignItems="flex-end">
-            {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
-            <Box {...ROW} gap={1}>
-              {Svg ? <Svg source={MARK} alt="tenantree" width={16} height={16} /> : null}
-              <Link href={dashboard} label="tenantree" />
+        <Box flexDirection="column" gap={1}>
+          <Box {...ROW}>
+            {/* TEPLU-17: folds the band to its row. */}
+            {control('collapse', '▾', () => void setBand($, { collapsed: true }))}
+            <Box {...ROW} flexGrow={1}>
+              {acc.status === 'signedOut' ? (
+                <Text color="warning" bold>◆ Not signed in to tenantree</Text>
+              ) : null}
+              {acc.status !== 'signedOut' && isProduction ? <Text color="error" bold>● Production</Text> : null}
+              {acc.status !== 'signedOut' ? picker : null}
             </Box>
-            {acc.status === 'signedOut' ? (
-              <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
-            ) : email ? (
-              <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
-            ) : null}
+            {/* The mark opens the Tenantree Dashboard of the subaccount in the browser (operator, 16.10.2026). */}
+            <Box {...END}>{brand}</Box>
+          </Box>
+          <Box {...ROW}>
+            {/* TEPLU-14: reads account, subaccount and approvals again. */}
+            {control('refresh', '↻', () => void refreshAll($))}
+            <Box {...ROW} flexGrow={1}>
+              {acc.status === 'signedOut' ? (
+                <Text dimColor>Sign in with /mcp → plugin:tenantree:BTP-Connector → Authenticate, then write: tenantree login</Text>
+              ) : (
+                <Text wrap="truncate-end">
+                  <Text dimColor>Signed in as</Text> {email ?? 'Reading the account …'}
+                </Text>
+              )}
+            </Box>
+            <Box {...END}>
+              {acc.status === 'signedOut' ? (
+                <Button key="signin-tenantree" label="Sign in" variant="primary" onPress={() => void signIn($)} />
+              ) : email ? (
+                <Button key="signout" label="Sign out" onPress={() => void signOut($)} />
+              ) : null}
+            </Box>
           </Box>
         </Box>
         {note ? (
