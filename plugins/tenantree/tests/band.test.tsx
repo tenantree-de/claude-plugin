@@ -162,7 +162,7 @@ test('TEPLU-17: the fold, unfold and refresh buttons sit in slots of one width t
   expect(slotOf(await band.drawn(), 'expand')).toEqual(collapse)
 })
 
-test('TEPLU-17: the folded band shows the mark, the name and the chosen subaccount', async ($, on) => {
+test('TEPLU-17: the folded band shows the control left and the mark right, without the subaccount (operator, 12.11.2026)', async ($, on) => {
   const store = new Map<string, unknown>([['band:/projects/a', { used: true, collapsed: true }]])
   engine(on, '/projects/a', store)
   await $.session.start({ cwd: '/projects/a', surface: 'desktop', isInteractive: true } as never)
@@ -175,7 +175,7 @@ test('TEPLU-17: the folded band shows the mark, the name and the chosen subaccou
   const text = JSON.stringify(folded)
   expect(text).toContain('"type":"Link"')
   expect(text).toContain('tenantree')
-  expect(text).toContain('Labor')
+  expect(text).not.toContain('Labor')
   expect(text).not.toContain('"key":"refresh"')
 })
 

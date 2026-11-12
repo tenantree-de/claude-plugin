@@ -1180,12 +1180,14 @@ export const register: Register = on => {
       const unsigned = acc.status === 'signedOut' || signinOpen || (t && (!t.signedIn || t.right === 'none'))
       return (
         <Box {...ROW} paddingX={1}>
-          {control('expand', '▸', () => void setBand($, { collapsed: false }))}
-          {brand}
+          {/* Operator, 12.11.2026: folded, only the control left and the mark right; no subaccount path. The notices
+              stay, because they ask for an action. */}
+          {control('expand', '↓', () => void setBand($, { collapsed: false }))}
           {t?.kind === 'production' ? <Text color="error" bold>● Production</Text> : null}
-          {t ? <Text dimColor wrap="truncate-end">{path(t)}</Text> : null}
           {open.length ? <Text color="warning">◆ {open.length === 1 ? '1 approval pending' : `${open.length} approvals pending`}</Text> : null}
           {unsigned ? <Text color="warning">◆ Sign-in required</Text> : null}
+          <Box flexGrow={1} />
+          {brand}
         </Box>
       )
     }
@@ -1243,7 +1245,7 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           <Box {...ROW}>
             {/* TEPLU-17: folds the band to its row. */}
-            {control('collapse', '▾', () => void setBand($, { collapsed: true }))}
+            {control('collapse', '↑', () => void setBand($, { collapsed: true }))}
             <Box {...ROW} flexGrow={1}>
               {acc.status === 'signedOut' ? (
                 <Text color="warning" bold>◆ Not signed in to tenantree</Text>
